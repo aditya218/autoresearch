@@ -1,6 +1,6 @@
 # Decisions
 
-All 23 decisions resolved, with rationale and consequence. Remaining unknowns are at the bottom —
+All 25 decisions resolved, with rationale and consequence. Remaining unknowns are at the bottom —
 none of them block implementation.
 
 ---
@@ -23,10 +23,11 @@ is mandatory, or the log quietly becomes decorative.
 proposer's reasoning about pending work degrades faster than throughput improves. *Consequence:*
 the proposer brief carries an `in_flight` block with no results in it.
 
-**D4 / D10 / D11 — Stages are either local or external jobs; external jobs are four user-supplied
+**D4 / D10 / D11 — Stages are either local or external jobs; external jobs are user-supplied
 commands, and exactly-once launch is required.**
-`launch`, `poll`, `cancel`, `find`. The engine passes `AUTORESEARCH_IDEM_KEY`; the launcher tags
-the job with it; `find` recovers it after a crash. *Because:* this is the only way to re-attach to
+Required: `launch`, `poll`, `find`, plus `logs` where triage is enabled. Optional: `cancel` (D24),
+`progress`. The engine passes `AUTORESEARCH_IDEM_KEY`; the launcher tags the job with it; `find`
+recovers it after a crash. *Because:* this is the only way to re-attach to
 an 8-hour job rather than relaunch it. *Consequence:* a missing `find` command is a spec error,
 and a lint rule caps local stages at 20 minutes so expensive work cannot hide in-process.
 
@@ -49,8 +50,9 @@ review, credential scoping. This is the largest single cost of the decision and 
 optional: the engine builds and runs agent-authored code unattended, hundreds of times.
 
 **D7 — Experiments take 1–8 hours.**
-*Consequence:* re-attach is essential rather than nice-to-have; early-kill on intermediate metrics
-is a first-class feature; a campaign runs for days, so provenance drift is a real risk.
+*Consequence:* re-attach is essential rather than nice-to-have; a campaign runs for days, so
+provenance drift is a real risk and the controller must survive infrastructure moving underneath
+it. Early-kill would be the other major consequence, but it is gated on cancel (D24).
 
 **D6 — Pure LLM proposer, no classical sampler.**
 *Because:* with code-level changes the search space is mostly structural, where a sampler has
