@@ -17,8 +17,8 @@ choice here:
 - The state model (D2) is the product's core artifact — the thing the proposer reads and a human
   audits. A framework's own execution history would be a second, competing account of what
   happened.
-- The durability contract is specific: re-attach to an 8-hour job by scanning for an idempotency
-  key (D11). That is a handful of well-understood mechanisms, not a framework's worth.
+- The durability contract is specific: re-attach to an 8-hour job rather than relaunch it (D11).
+  That is a handful of well-understood mechanisms, not a framework's worth.
 - It removes an operational dependency from a system that must run unattended for days.
 
 The cost is that the failure-injection suite in doc 04 §6 is mandatory rather than optional. That

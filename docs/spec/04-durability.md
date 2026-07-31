@@ -174,7 +174,7 @@ mitigation is detection and alerting rather than termination.
 
 | Failure | Cheap-path recovery | Work lost |
 | --- | --- | --- |
-| Controller crash, external stage running | Re-attach via label scan | **None** |
+| Controller crash, external stage running | Poll the recorded job_id | **None** |
 | Controller crash, local stage running | Re-execute the stage | That stage only (≤20 min by lint rule) |
 | Controller crash between stages | Resume at next PENDING stage | None |
 | External job killed (spot preemption) | Retry as `infra_failure`; resume from stage checkpoint if the stage supports one | Stage progress since last checkpoint |
@@ -258,7 +258,7 @@ Durability claims that are not continuously tested are aspirations. Minimum set:
 | --- | --- |
 | Kill controller at every event boundary of a full experiment | Replay reaches identical terminal state; no duplicate external launches |
 | Kill between `StageLaunchIntent` and launch | Recovery launches exactly once |
-| Kill between launch and `StageLaunched` | Recovery re-attaches, does not relaunch |
+| Kill between launch and the job_id commit | Recovery adopts via receipt or `find`; relaunches only at tier 3, and flags it |
 | Two runs race for the lease | Exactly one wins; loser's appends rejected with `stale_fence` |
 | Zombie run (paused 5×TTL, then resumes) | All its appends rejected; its orphan jobs reaped |
 | Concurrent transition attempts on one entity | Exactly one CAS wins; the loser re-reads rather than clobbering |

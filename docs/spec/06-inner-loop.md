@@ -131,10 +131,11 @@ commands and a metrics file.
 | `cancel` *(optional, D24)* | `job_id` | — | 0 if cancelled or already terminal |
 | `find` *(optional, recommended)* | `AUTORESEARCH_IDEM_KEY` | the `job_id` if a job carries this tag, nothing otherwise | 0 either way |
 
-**The launcher must tag the submitted job with `AUTORESEARCH_IDEM_KEY`** — as a label, a job
-name, or a comment field, whatever the scheduler supports — so that `find` can recover it. This
-is the one requirement the engine places on your infrastructure, and everything in doc 04 §2
-depends on it.
+The engine always passes `AUTORESEARCH_IDEM_KEY` to `launch.sh`. What the launcher does with it
+selects the recovery tier in doc 04 §2: write it as a receipt filename (recommended default), tag
+the submitted job with it so `find` can retrieve it (strongest), or ignore it (weakest, recovery
+relaunches and flags). No tier is required by the engine; the tier in use is recorded on the
+campaign so a report can state what its recovery guarantee actually was.
 
 ### Post-launch provenance verification
 

@@ -3,9 +3,10 @@
 All 26 decisions resolved, with rationale and consequence. Remaining unknowns are at the bottom —
 none of them block implementation.
 
-One decision has been revised since it was first taken: **D2**, from event sourcing to mutable
-state plus a debug log. The original rationale did not survive scrutiny; the reasoning is recorded
-in full below rather than quietly replaced.
+Two decisions have been revised since first taken: **D2**, from event sourcing to mutable state
+plus a debug log, and **D11**, from a mandatory `find` command to tiered launch recovery. In both
+cases the original rationale did not survive scrutiny. The reasoning is recorded in full below
+rather than quietly replaced.
 
 ---
 
@@ -45,9 +46,9 @@ the proposer brief carries an `in_flight` block with no results in it.
 **D4 / D10 / D11 — Stages are either local or external jobs; external jobs are user-supplied
 commands, and exactly-once launch is required.**
 Required: `launch`, `poll`, plus `logs` where triage is enabled. Optional: `find` (D11),
-`cancel` (D24), `progress`. *Because:* re-attaching to an 8-hour job beats relaunching it. *Consequence:* a missing `find` command is a spec error,
-and a lint rule caps local stages at 20 minutes so expensive work cannot hide in-process —
-`implement` being the one sanctioned exception at 60m (D26).
+`cancel` (D24), `progress`. *Because:* re-attaching to an 8-hour job beats relaunching it.
+*Consequence:* a lint rule caps local stages at 20 minutes so expensive work cannot hide in the
+controller — `implement` being the one sanctioned exception at 60m (D26).
 
 **D11 — Launch recovery is tiered; `find` is recommended, not required.** *(Revised — it was
 originally a spec error to omit it.)*

@@ -77,11 +77,13 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 1. **The state table is the truth.** Transitions are compare-and-swap with a fencing check. The
    transition log is written in the same transaction, and **nothing in the control path reads
    it** — that rule is what keeps it a debugging aid rather than a second source of truth.
-2. **Nothing external happens without a recorded intent.** Intent is committed *before* the side
-   effect, carrying an idempotency key stamped onto the external resource. Recovery reconciles
-   by that key.
-3. **One writer per campaign.** Enforced by lease + fencing token, checked on every append.
-4. **The filesystem is never authoritative.** Recovery reads Postgres, never a directory listing.
+2. **Nothing external happens without a recorded intent.** The intent row is committed *before*
+   the side effect, carrying a deterministic key. How much of the remaining ambiguity gets
+   resolved is tiered (D11), not absolute — and the tier in use is recorded rather than assumed.
+3. **One writer per campaign.** Enforced by lease + fencing token, checked on every state change.
+4. **The filesystem is never authoritative for state.** Recovery reads Postgres to learn what
+   state things are in. The one carve-out is the launcher's receipt file, which is evidence about
+   an external effect rather than state — the same role `find` plays.
 5. **The engine does not know what a job is.** It submits a command, polls a job_id, and reads
    a metrics file. Everything domain-specific lives in the user's scripts.
 6. **Infra failure is not a research result.** What the proposer learns and what the budget is
