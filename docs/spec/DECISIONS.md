@@ -1,6 +1,6 @@
 # Decisions
 
-All 25 decisions resolved, with rationale and consequence. Remaining unknowns are at the bottom —
+All 26 decisions resolved, with rationale and consequence. Remaining unknowns are at the bottom —
 none of them block implementation.
 
 One decision has been revised since it was first taken: **D2**, from event sourcing to mutable
@@ -82,6 +82,37 @@ diversity, the engine must supply it deliberately.
 **D23 — Constrained scalar objective, no Pareto frontier.**
 One primary metric, others as guardrails. *Consequence:* the leaderboard stays a ranking; a
 guardrail violation makes an experiment infeasible, not failed.
+
+**D26 — The coding agent iterates on mechanical failures; semantic failures surface untouched.**
+`build` and `test` are tools inside the agent's sandbox, capped at `max_repair_iterations`
+(default 3). *Because:* a compile error says nothing about whether the hypothesis was good, and
+surfacing it as a negative result teaches the proposer that a direction is dead when the agent
+merely fumbled the syntax.
+
+*The line* is not effort or size but whether the change has started producing evidence: compile,
+lint, import, and patch-apply errors mean the change does not yet exist in runnable form, so the
+agent may iterate. Failing tests, diverging numerics, and a regressed metric mean the change ran —
+that is the finding, and retrying it is how you get an agent that makes tests pass by any means
+available.
+
+*Consequences.* The loop lives **inside** the `implement` stage rather than as a DAG cycle, so
+resumption semantics are untouched; `implement` gets a raised 60m local ceiling as the one
+sanctioned exception, accepting that a controller crash discards up to an hour of agent work
+(tokens and build time, not GPU-hours). The old `build` stage becomes `verify_build`, a clean-room
+build of the committed SHA that catches "it built in the dirty worktree but not from a fresh
+checkout".
+
+*The risk this introduces* is not test-hacking but **hypothesis drift**: an agent that cannot make
+the fusion compile may converge under repair pressure on something that compiles and no longer
+fuses anything, after which eight GPU-hours measure a near-no-op and the campaign records "kernel
+fusion: no effect". That false null is worse than a failure — it looks exactly like a finding, and
+it closes a direction that was never tested. Guarded by a fidelity check in `review` comparing the
+final diff against the `change_spec`, before any job launches.
+
+*Hence a new outcome:* `could_not_implement`, distinct from `experiment_failure`. It is reported
+to the proposer as "not tested" rather than "does not work", and it does not count toward family
+saturation — clustered implementation failures mean a direction is hard to express, not that it is
+unpromising.
 
 ## Campaign semantics
 

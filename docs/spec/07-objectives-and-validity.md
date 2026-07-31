@@ -94,6 +94,7 @@ that raises the number without solving the problem is, from its perspective, a s
 | Emitting log lines that get a real failure triaged as `infra`, earning a retry | Evidence must verify against the log; retry ceiling applies regardless of the verdict (doc 08 §3) |
 | Winner's curse across many experiments | **Confirmation runs** (below) |
 | Silent environment drift making old results incomparable | Provenance drift detection (`06-inner-loop.md`) |
+| **False null**: repair iteration drifts the diff away from the hypothesis, so an 8-hour job measures a near-no-op and reports "no effect" | Fidelity check in `review` before any launch; outcome is `could_not_implement`, never a null result (doc 08 §2, D26) |
 
 ### Confirmation policy
 
@@ -109,6 +110,12 @@ selection noise. Before a campaign reports a winner:
 
 A campaign that honestly reports "no reliable improvement found" is functioning correctly. An
 engine that cannot produce that outcome is not measuring anything.
+
+The mirror of that principle is why `could_not_implement` is a separate outcome (D26): an engine
+that reports "this idea does not work" when it never managed to run the idea is worse than one
+that reports nothing. A false null is indistinguishable from a real finding, and it closes a
+direction permanently — it enters the research summary as established, and the proposer stops
+proposing there.
 
 ### Baselines
 

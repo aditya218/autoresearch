@@ -139,7 +139,8 @@ draw wrong conclusions and burn money on doomed retries.
 | Class | Example | Retried? | Charged to budget? | Shown to proposer? |
 | --- | --- | --- | --- | --- |
 | `infra_failure` | OOM-killed node, image pull error, cloud quota, network | **Yes**, with backoff, capped attempts | Cost incurred is charged; the experiment slot is not consumed | **No** — it is not a research result |
-| `experiment_failure` | Generated code doesn't compile; diff review rejects it; training diverges; eval crashes | No (a retry would fail identically) | Yes | **Yes** — a real, informative negative result. "You may not modify the benchmark" is exactly the feedback that improves the next proposal |
+| `experiment_failure` | Tests fail; training diverges; the metric regresses; diff review rejects the change | No (a retry would fail identically) | Yes | **Yes** — a real, informative negative result. "You may not modify the benchmark" is exactly the feedback that improves the next proposal |
+| `could_not_implement` | Repair iteration exhausted, or the final diff drifted from the `change_spec` (D26) | No | Yes, but only the implement cost — no job launched | **Yes, and distinctly.** It says nothing about the hypothesis; it says the agent could not express it. Conflating it with `experiment_failure` teaches the proposer that a direction is dead when it was never tested |
 | `aborted` | Budget hit mid-flight; operator kill | No | Partial cost charged | As "not evaluated", never as a negative result |
 
 Ambiguous cases resolve to `infra_failure` **at most N times** (default 3), after which they are

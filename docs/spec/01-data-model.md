@@ -181,7 +181,8 @@ an experiment means exercising the user-configured workflow to a terminal state.
 | `provenance` | jsonb | base_commit, image digest, dataset version, hardware class, engine version |
 | `state` | enum | See `03-lifecycle.md` |
 | `current_stage` | text? | Stage key currently executing. Updated in place; the inspector's main signal |
-| `outcome` | enum? | `success` \| `experiment_failure` \| `infra_failure` \| `aborted` \| `invalidated` |
+| `repair_iterations` | int | Build/test repair rounds the coding agent needed (D26). Thrash is visible rather than hidden inside one stage's runtime |
+| `outcome` | enum? | `success` \| `experiment_failure` \| `could_not_implement` \| `infra_failure` \| `aborted` \| `invalidated` |
 | `outcome_detail` | text? | |
 | `metrics` | jsonb? | Aggregated over replicates: `{value, stddev, n, ci_low, ci_high}` per metric |
 | `guardrail_violations` | jsonb? | Which guardrails failed, with values |

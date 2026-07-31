@@ -32,7 +32,10 @@ can be replayed exactly.
   "research_summary": "LLM-maintained digest, every claim citing experiment_ids",
   "leaderboard_top_k": [ /* best feasible experiments: diff summary + metrics + CI */ ],
   "recent_k": [ /* most recent regardless of rank — captures the frontier */ ],
-  "negative_results": [ /* experiment_failures with the analyst's explanation */ ],
+  "negative_results": [ /* experiment_failures with the analyst's explanation — the idea was
+                          tested and did not work. These close a direction */ ],
+  "not_implemented": [ /* could_not_implement (D26) — the agent could not express the idea.
+                         These do NOT close a direction; they ask for a sharper change_spec */ ],
   "structural_families": [ /* what kinds of change have been tried, and their outcomes */ ],
 
   "in_flight": [ /* 2-4 hypotheses currently executing: statement + diff summary + ETA.
@@ -129,6 +132,12 @@ reporting steady tiny improvements. With no sampler injecting diversity, the eng
 | Novelty requirement | Every hypothesis states how it differs from its nearest tried neighbour; admission rejects vacuous differentiators |
 | Diversity escalation | When the top-k leaderboard stops changing, the brief explicitly instructs exploration and the exploration quota rises |
 | Diversity collapse stop | M consecutive rounds of duplicate-only proposals (default 5) stops the campaign — it has nothing left to say |
+
+Family saturation counts only **tested** outcomes. A family where three experiments came back
+`could_not_implement` (D26) is not saturated — it is unexpressed, and marking it dead would retire
+a direction the campaign never actually evaluated. Clustered implementation failures are their own
+signal: the family may be hard to express in this codebase rather than unpromising, and the right
+response is a more specific `change_spec` or a decomposition into smaller steps.
 
 The exploration quota is the important one, and it will feel wasteful in the middle of a campaign
 when the exploit direction is producing gains. It is worth it: the alternative is a campaign that

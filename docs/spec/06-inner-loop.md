@@ -48,23 +48,25 @@ stages:
   - key: implement
     kind: local
     handler: autoresearch.agents.coding_agent      # writes the change, commits to the branch
-    timeout: 20m
+    timeout: 60m                                   # raised ceiling — see lint rule 2
+    tools: [read, write, build, test]              # iterates internally against build/test (D26)
+    max_repair_iterations: 3
     retries: { max: 1, on: [infra] }
 
   - key: review
     kind: local
-    handler: autoresearch.safety.diff_review       # protected paths, secrets, gaming — doc 08
+    handler: autoresearch.safety.diff_review       # protected paths, secrets, fidelity — doc 08
     needs: [implement]
     timeout: 5m
     on_reject: abort_experiment
 
-  - key: build
+  - key: verify_build
     kind: local
-    sandbox: subprocess                            # agent-authored build scripts run here
+    sandbox: subprocess                            # clean checkout of the commit, not the worktree
     command: ["make", "build"]
     needs: [review]
     timeout: 10m
-    failure_class: experiment                      # a build break is a result, not an infra fault
+    failure_class: experiment                      # the agent said it built; from clean it did not
 
   - key: train
     kind: external_job
@@ -96,6 +98,12 @@ terminal: [analyze]
    is a spec error. This is what makes the durability guarantee real rather than aspirational:
    a controller crash re-executes a local stage from scratch. If your build takes 40 minutes,
    it is an `external_job`.
+
+   **`implement` is the one sanctioned exception**, with a ceiling of 60m, because internal
+   repair iteration (D26) means an agent turn plus up to three builds. The trade is explicit: a
+   controller crash mid-implement discards up to an hour of agent work. That is LLM tokens and
+   build time, not GPU-hours, and controller crashes are rare — cheap enough to accept, and far
+   cheaper than the alternative of making a sandboxed multi-turn agent session re-attachable.
 3. **Every `external_job` must declare `launch`, `poll`, and `find`.** Missing `find` is a spec
    error, not a warning — without it, exactly-once launch is impossible (doc 04) and a crash in
    the launch window leaks a running job. `cancel` is optional (D24); declaring it enables early
@@ -146,6 +154,78 @@ inherits the error.
 | --- | --- |
 | `progress` | Prints intermediate metrics as JSON. Surfaced in the inspector; enables `kill_criteria` early abort once `cancel` exists |
 | `logs` | Prints a log tail. **Required when any status maps to `triage`** (below). Also surfaced in the inspector and given to the analyst |
+
+---
+
+## Repair iteration inside `implement` (D26)
+
+A compile error says nothing about whether the hypothesis was good. Forcing it to surface as a
+negative result teaches the proposer that fusing the kernel does not help, when the truth is that
+the agent fumbled a template parameter. So the coding agent gets `build` and `test` as **tools
+inside its sandbox** and iterates until the change is runnable.
+
+### The line: has the change started producing evidence?
+
+Not "small vs. large" and not "easy vs. hard" — the boundary is whether the code has executed the
+intended change at all. Before that, nothing has been learned about the idea. After it, everything
+is evidence.
+
+| Agent may iterate — the change does not yet exist in runnable form | Must surface untouched — the change ran and this is what it did |
+| --- | --- |
+| Compile, syntax, type errors | Existing tests fail |
+| Import errors, missing dependency declarations | Numerics drift beyond the declared tolerance |
+| Lint and format failures | Training diverges, loss goes NaN |
+| Crash on startup in the new code path | The benchmark runs and the metric regresses |
+| Patch does not apply to the base commit | Memory or latency guardrail violated |
+
+Retrying anything in the right-hand column is how you get an agent that makes the tests pass by
+whatever means are available — precisely what doc 08 exists to prevent.
+
+### Why the loop lives inside the stage, not in the DAG
+
+The workflow is acyclic (lint rule 1), so `implement → build → implement` cannot be a workflow
+edge without breaking resumption. Instead the build is a **tool the agent calls**, which is also
+how coding agents naturally work. The DAG stays linear and no new machinery is needed.
+
+`verify_build` after `review` is therefore not redundant: it is a **clean-room build of the
+committed SHA**, catching the case where the change built in the agent's dirty worktree but does
+not build from a fresh checkout — an uncommitted file, a stale artifact, a generated file that was
+never added. A `verify_build` failure after the agent reported success is `experiment_failure`
+with no further iteration: something is wrong beyond a syntax slip.
+
+### Hypothesis drift — the real risk of iteration
+
+The obvious worry is an agent hacking tests. The subtler and more likely one is this: the agent
+cannot get the fusion to compile, and under repair pressure it converges on something that *does*
+compile but no longer implements the hypothesis. The engine then spends eight GPU-hours measuring
+a near-no-op and records "kernel fusion: no effect."
+
+That is worse than a failed experiment. It is a **false null result**, and it will be fed to the
+proposer as evidence and written into the research summary as an established finding.
+
+Three controls:
+
+1. **Fidelity check in `review`** (doc 08). The final diff is compared against the original
+   `change_spec`. A diff that no longer implements the stated intent ends the experiment as
+   `could_not_implement` *before* any job launches.
+2. **Iteration cap** (`max_repair_iterations`, default 3), after which the outcome is
+   `could_not_implement`.
+3. **Every iteration is recorded** — attempt count, what failed, what changed — so thrash is
+   visible in the inspector rather than hidden inside one stage's runtime.
+
+### `could_not_implement` is a distinct outcome
+
+"The agent could not build this" and "this idea does not work" are different facts, and collapsing
+them corrupts the search. The first says nothing about the hypothesis; the second is the finding
+the campaign exists to produce.
+
+They are therefore separate outcomes, surfaced to the proposer differently: a falsified hypothesis
+closes a direction, while `could_not_implement` leaves it open and signals that the idea needs a
+more specific `change_spec` or should be broken into smaller steps. Several of these clustering in
+one structural family is itself informative — the family may be hard to express in this codebase
+rather than unpromising, and marking it saturated would be the wrong call.
+
+---
 
 ### Failure classification
 

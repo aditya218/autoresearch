@@ -36,7 +36,7 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 | [05-outer-loop.md](05-outer-loop.md) | Proposer contract, admission control, stopping rules |
 | [06-inner-loop.md](06-inner-loop.md) | Workflow spec, command executor, stage contract |
 | [07-objectives-and-validity.md](07-objectives-and-validity.md) | Metric contract, noise, reward-hacking defenses |
-| [08-safety.md](08-safety.md) | Sandboxing, protected paths, diff review, credentials |
+| [08-safety.md](08-safety.md) | Sandboxing, protected paths, diff review, fidelity, credentials |
 | [09-interfaces.md](09-interfaces.md) | CLI, web inspector, package layout |
 | [DECISIONS.md](DECISIONS.md) | Every resolved decision with rationale, and what remains open |
 
@@ -69,6 +69,7 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 | D23 | Objectives | **Constrained scalar.** One primary metric, others as guardrails. No Pareto frontier. |
 | D24 | Cancelling jobs | **Deferred.** Jobs run to completion; every stop path gates admission, not execution. |
 | D25 | Failure classification | **Status map first, agent triage on ambiguity**, with an absolute retry ceiling behind both. |
+| D26 | Coding agent iteration | **Iterates on mechanical failures** (compile, lint, import) inside the stage; semantic failures surface untouched. |
 
 ## Design principles
 

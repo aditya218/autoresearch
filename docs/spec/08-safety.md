@@ -96,10 +96,29 @@ The `review` stage runs, in order, aborting on the first rejection:
 | Diff size above `max_diff_lines` | Require approval — huge diffs are usually a confused agent |
 | Metric-gaming heuristics (hardcoded expected values, benchmark short-circuits, disabled assertions, timing-code edits) | Flag; require approval if `strict_review` |
 | Base-commit mismatch | Reject — the branch was not cut from the pinned base |
+| **Fidelity**: does the final diff still implement the `change_spec`? | Reject as `could_not_implement` — see below |
 
 Heuristic checks produce false positives. They are deliberately set to *flag* rather than reject
 by default, because a rejection loop that blocks legitimate work will get switched off entirely,
 which is worse than a few reviewed diffs.
+
+### The fidelity check
+
+Repair iteration (D26) lets the coding agent fix compile errors rather than surfacing them as
+research results. That is right, and it introduces a failure mode worth naming separately from
+reward hacking, because it needs no bad intent at all: under repair pressure an agent that cannot
+make the fusion compile may converge on something that compiles but no longer fuses anything. The
+engine then spends eight GPU-hours measuring a near-no-op and records a **false null result** —
+which is fed to the proposer as evidence and written into the research summary as established.
+
+A false null is worse than a failed experiment. A failure is visibly a failure; a false null looks
+exactly like a real finding and quietly closes a direction that was never tested.
+
+The check compares the final diff against the original `change_spec` and asks whether the stated
+intent is still implemented. It runs before any job launches, so the cost of catching it is one
+review call rather than a full experiment. A drifted diff ends the experiment as
+`could_not_implement`, which is reported to the proposer as "not tested", never as "does not
+work".
 
 ---
 
