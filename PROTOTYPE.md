@@ -9,6 +9,11 @@ being killed at any point. Everything uncertain about this system — whether th
 converges, whether the proposer stays diverse — sits on top of this and is only worth building
 once this is solid.
 
+## Configuring a campaign
+
+See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) — the stage schema, the environment given to your
+scripts, and what the linter rejects.
+
 ## Run it
 
 ```bash
