@@ -14,9 +14,9 @@ command checks a permission.
 Temporal or Prefect would supply durable execution, which is most of doc 04. It is still the wrong
 choice here:
 
-- The ledger is event-sourced in Postgres (D2) and is the product's core artifact — the thing the
-  proposer reads and the thing a human audits. A framework's own event history would be a second,
-  competing source of truth.
+- The state model (D2) is the product's core artifact — the thing the proposer reads and a human
+  audits. A framework's own execution history would be a second, competing account of what
+  happened.
 - The durability contract is specific: re-attach to an 8-hour job by scanning for an idempotency
   key (D11). That is a handful of well-understood mechanisms, not a framework's worth.
 - It removes an operational dependency from a system that must run unattended for days.
@@ -39,8 +39,8 @@ suite is how the durability claims stay true, and it would be worth writing even
 | Git | subprocess to `git`. No library |
 | Sandboxing | subprocess with rlimits and a container runtime where available (doc 08) |
 
-Deliberately absent: a workflow engine, an ORM, a task queue, an experiment tracker. The ledger
-is the experiment tracker.
+Deliberately absent: a workflow engine, an ORM, a task queue, an experiment tracker. The state
+tables are the experiment tracker.
 
 ---
 
@@ -48,7 +48,7 @@ is the experiment tracker.
 
 ```
 autoresearch/
-  ledger/          append_event, projections, migrations, replay
+  store/           schema, migrations, transition(), state queries, transition log
   domain/          entities, state machines, transition validation
   control/         run loop, lease, recovery, admission, budget
   executors/       command executor, local sandboxed executor
@@ -98,8 +98,8 @@ autoresearch exp logs    <id> [--stage train]
 autoresearch exp invalidate <id> --reason contamination
 
 autoresearch kill        --campaign <id>  # halt admission now; in-flight jobs still complete
-autoresearch ledger replay --campaign <id> --as-of <event_id>
-autoresearch ledger verify --campaign <id>   # rebuild projections, diff against live
+autoresearch history <entity_id>          # transition log for one entity, newest last
+autoresearch history --campaign <id> --since 3h   # everything that moved, for debugging
 ```
 
 `run start` is deliberately separate from `campaign start`. A campaign is a durable object that
@@ -138,8 +138,8 @@ raises.
 - **Metrics** worth exporting: in-flight experiments, queue depth, tick duration, poll latency,
   lease renewals and seizures, infra-failure rate, spend rate, proposer calls and token cost.
 - **Alerts** that matter for unattended operation: no active run on an ACTIVE campaign for >10
-  minutes; circuit breaker tripped; spend rate above threshold; orphan job detected; projection
-  lag growing.
+  minutes; circuit breaker tripped; spend rate above threshold; orphan job detected; an experiment
+  in one state far longer than its stage timeout.
 
 The first alert is the important one. A campaign whose controller died quietly at 2am looks
 exactly like a campaign whose experiments are simply slow, and at 8 hours per experiment nobody
@@ -149,8 +149,9 @@ notices for a day.
 
 ## Build order
 
-1. **Ledger + domain.** Append with fencing, projections, replay, state machines. Test with a
-   fake in-memory executor and no agents. Nothing else works if this is wrong.
+1. **Store + domain.** Schema, `transition()` with CAS and fencing, the transition log, state
+   machines. Test with a fake in-memory executor and no agents. Nothing else works if this is
+   wrong — and it is now a much smaller step than an event-sourced ledger would have been.
 2. **Control loop + lease + recovery**, including the failure-injection suite (doc 04 §6). Still
    no agents: a stub proposer emitting fixed hypotheses is enough to exercise everything.
 3. **Command executor**, against a trivial `launch.sh`/`poll.sh`/`find.sh` that runs local

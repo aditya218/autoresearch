@@ -211,8 +211,8 @@ highly accurate.
 crash. It must be **cheap, idempotent, and side-effect free**. At D8 concurrency (2–4) and a 60s
 interval this is a handful of calls per minute; treat anything expensive as a bug.
 
-Polls are not individually logged — they would dominate the ledger. Only *transitions* produce
-events. `last_polled_at` is a projection column, updated in place.
+Polls are not individually logged — they would drown the transition log. Only *transitions* are
+recorded; `last_polled_at` is a column updated in place.
 
 ---
 

@@ -30,7 +30,7 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 | Doc | Contents |
 | --- | --- |
 | [01-data-model.md](01-data-model.md) | Entities, relationships, SQL schema |
-| [02-event-log.md](02-event-log.md) | Ledger as event log, event catalog, projections |
+| [02-state-and-history.md](02-state-and-history.md) | State transitions, CAS + fencing, the debug log |
 | [03-lifecycle.md](03-lifecycle.md) | State machines for every entity |
 | [04-durability.md](04-durability.md) | Leases, fencing, idempotency, re-attach, recovery |
 | [05-outer-loop.md](05-outer-loop.md) | Proposer contract, admission control, stopping rules |
@@ -45,7 +45,7 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 | # | Decision | Choice |
 | --- | --- | --- |
 | D1 | `run` semantics | Execution session holding a **lease** on the campaign. Experiments are not owned by runs. |
-| D2 | Durability substrate | **Event-sourced append-only log in Postgres.** Entity tables are projections. |
+| D2 | Durability substrate | **Mutable state tables in Postgres are the source of truth**, plus an append-only transition log for debugging only. |
 | D3 | Concurrency model | **Parallel** experiments; the proposer sees in-flight, unresolved experiments. |
 | D4 | Stage execution | **Both** local stages and external jobs with re-attach, declared per stage. |
 | D5 | What an experiment is | **An agent writes and runs code.** Branch per experiment off a pinned base commit. |
@@ -72,8 +72,9 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 
 ## Design principles
 
-1. **The log is the truth.** Every mutation is an event. Projections are disposable and
-   rebuildable. If a projection and the log disagree, the log wins.
+1. **The state table is the truth.** Transitions are compare-and-swap with a fencing check. The
+   transition log is written in the same transaction, and **nothing in the control path reads
+   it** — that rule is what keeps it a debugging aid rather than a second source of truth.
 2. **Nothing external happens without a recorded intent.** Intent is committed *before* the side
    effect, carrying an idempotency key stamped onto the external resource. Recovery reconciles
    by that key.

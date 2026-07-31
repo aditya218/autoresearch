@@ -3,6 +3,10 @@
 All 25 decisions resolved, with rationale and consequence. Remaining unknowns are at the bottom —
 none of them block implementation.
 
+One decision has been revised since it was first taken: **D2**, from event sourcing to mutable
+state plus a debug log. The original rationale did not survive scrutiny; the reasoning is recorded
+in full below rather than quietly replaced.
+
 ---
 
 ## Core architecture
@@ -13,10 +17,25 @@ drove it. *Because:* a crash-resume must produce a new run without orphaning in-
 ownership makes impossible. *Consequence:* concurrency safety must come from a lease, and it does
 (doc 04 §1).
 
-**D2 — The ledger is an event-sourced append-only log in Postgres.**
-Entity tables are projections, rebuildable from event 0. *Because:* recovery becomes replay rather
-than inference, and the audit trail is free. *Consequence:* a projection-rebuild equivalence test
-is mandatory, or the log quietly becomes decorative.
+**D2 — Mutable state tables are the source of truth; an append-only transition log exists for
+debugging only.** *(Revised — the original decision was full event sourcing.)*
+
+*Because:* the durability guarantees turned out to be orthogonal to event sourcing. Intent-before-
+effect is committing a row before calling `launch.sh`; idempotency is a unique constraint; fencing
+is a `WHERE` clause; the resume point is `SELECT … WHERE state IN (non-terminal)`. None of them
+need a log. And history is largely free anyway — one row per experiment and per stage attempt,
+retained forever. What an event log uniquely provides is *transition* history, which a small
+append-only table supplies without a projection layer, replay code, or a rebuild-equivalence test.
+
+*Consequence:* two rules keep the log from silently becoming load-bearing again — it is written in
+the same transaction as the state change (a best-effort log drifts precisely during the incidents
+you need it for), and **nothing in the control path reads it**. Anything the control loop needs is
+a column, not a count over log rows. Enforceable as a lint rule against `control/` importing the
+log reader.
+
+*What was given up:* point-in-time reconstruction of the whole ledger. Mitigated by storing
+`proposer_context` verbatim, so past decisions remain inspectable even though the surrounding
+state is not rebuildable.
 
 **D3 / D8 — Parallel experiments, 2–4 in flight, proposer sees the unresolved frontier.**
 *Because:* at 1–8 hours per experiment, strict sequencing wastes most of the day; beyond ~4 the
@@ -125,8 +144,8 @@ solving a problem that does not exist here. *Consequence:* three invariants — 
 authoritative for state, write-then-record, and one directory per stage attempt.
 
 **D17 — Hundreds of experiments per campaign, tens of campaigns per project.**
-*Consequence:* single Postgres instance, synchronous projections, no partitioning. Partitioning is
-documented as a migration, not built.
+*Consequence:* single Postgres instance, no partitioning, and the registry rollups stay plain SQL
+views rather than maintained tables. Partitioning is documented as a migration, not built.
 
 **D20 — Small trusted team, shared instance.** Attribution everywhere, authorization nowhere.
 *Consequence:* adding authorization later is additive, because attribution is recorded from day

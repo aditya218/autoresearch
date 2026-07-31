@@ -1,7 +1,8 @@
 # 03 — Lifecycles and State Machines
 
-Every state transition is an event (`02-event-log.md`). Illegal transitions are rejected by the
-append function, not merely avoided by application code.
+Every state transition goes through the `transition()` helper in `02-state-and-history.md`: a
+compare-and-swap on the state column, a fencing check, and a `transition_log` row, all in one
+transaction. Illegal transitions are rejected there, not merely avoided by application code.
 
 ---
 

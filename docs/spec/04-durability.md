@@ -47,8 +47,8 @@ new work once `now() > heartbeat_at + ttl/2` and has not successfully renewed.
 
 **Fencing** is what makes this safe rather than merely usually-safe. Clock skew, a 90-second GC
 pause, or a paused VM can all make a run believe it still holds an expired lease. The monotonic
-token is checked inside `append_event` (`02-event-log.md`), so a zombie's writes are rejected by
-the database regardless of what the zombie believes. **Every external side effect must also carry
+token is checked inside `transition()` (`02-state-and-history.md`), so a zombie's writes are
+rejected by the database regardless of what the zombie believes. **Every external side effect must also carry
 the token** where the target system supports it (job labels, object-storage preconditions) so
 zombie launches are attributable and reapable.
 
@@ -165,7 +165,7 @@ A run performs this deterministically on start, before doing any new work:
 1.  Acquire lease → obtain fencing token. Abort if held.
 2.  Append RunStarted.
 3.  Load campaign config (immutable) and verify config_hash.
-4.  Rebuild/verify projection freshness: projection_offset == max(event_id).
+4.  Verify campaign config hash and workflow version match what is recorded.
 5.  RECONCILE STAGES:
       LAUNCH_INTENT  -> external scan by idempotency key (see above)
       LAUNCHED       -> poll handle; dead & not terminal -> infra_failure -> retry
@@ -223,6 +223,7 @@ Durability claims that are not continuously tested are aspirations. Minimum set:
 | Kill between launch and `StageLaunched` | Recovery re-attaches, does not relaunch |
 | Two runs race for the lease | Exactly one wins; loser's appends rejected with `stale_fence` |
 | Zombie run (paused 5×TTL, then resumes) | All its appends rejected; its orphan jobs reaped |
-| Full projection rebuild from event 0 | Byte-identical to live projection tables |
+| Concurrent transition attempts on one entity | Exactly one CAS wins; the loser re-reads rather than clobbering |
+| Crash between state UPDATE and transition_log INSERT | Impossible — same transaction. Asserted by test, since it is the one rule that makes the log trustworthy |
 | External system returns success after client timeout | No double-charge, no double-launch |
 | Postgres connection drops mid-append | Retry by key is a no-op or completes; never both |

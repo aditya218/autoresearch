@@ -56,7 +56,7 @@ scripts' business.
   proposer chasing them.
 - **Multi-objective is out of scope** (D23). Constrained scalar covers the stated use cases and
   keeps the leaderboard a simple ranking. If a project later needs a true Pareto frontier, the
-  leaderboard projection becomes a non-dominated set and the proposer is asked to expand the
+  leaderboard query becomes a non-dominated set and the proposer is asked to expand the
   frontier rather than beat a scalar — a contained change to two components, which is why it is
   safe to defer.
 
