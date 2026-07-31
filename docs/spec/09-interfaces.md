@@ -53,7 +53,7 @@ autoresearch/
   control/         run loop, lease, recovery, admission, budget
   executors/       command executor, local sandboxed executor
   workflow/        spec parsing, lint rules, DAG resolution
-  agents/          proposer, coding agent, analyst, summarizer
+  agents/          proposer, coding agent, analyst, summarizer, triage, re-validator
   safety/          diff review, protected paths, secret scan, sandbox policy
   objective/       metric registry, aggregation, comparison, confirmation
   cli/
@@ -61,10 +61,13 @@ autoresearch/
   testing/         failure injection harness (doc 04 §6)
 ```
 
-The dependency rule: `ledger` and `domain` depend on nothing else in the package; `control`
-depends on both; `agents`, `executors`, and `safety` are called by `control` and never call it
-back. A coding agent that could write to the ledger would be a coding agent that could report its
-own results (doc 08 §5), so this is a safety boundary, not just tidiness.
+The dependency rule: `store` and `domain` depend on nothing else in the package; `control` depends
+on both; `agents`, `executors`, and `safety` are called by `control` and never call it back. A
+coding agent that could write to the state tables would be a coding agent that could report its own
+results (doc 08 §5), so this is a safety boundary, not just tidiness.
+
+Two lint rules enforce boundaries that are otherwise easy to erode: nothing under `control/` may
+import the transition-log reader (doc 02 §3), and nothing under `agents/` may import `store/`.
 
 ---
 
@@ -121,7 +124,7 @@ of state that is genuinely unpleasant to follow through CLI polling.
 | Experiment | Hypothesis, diff, stage timeline, metrics with intervals, logs, lineage |
 | Ideas | Queued hypotheses with priority; rejected ones with reasons |
 | Summary | Current research summary, with citations resolving to experiments; version history |
-| Events | Raw ledger stream, filterable. The debugging view of last resort |
+| History | Transition log, filterable by entity or time. The debugging view of last resort |
 
 Read-only in v1 because writes need the actor attribution and confirmation semantics the CLI
 already has, and duplicating them in a web form is scope that buys little for a small team.
@@ -156,7 +159,9 @@ notices for a day.
    no agents: a stub proposer emitting fixed hypotheses is enough to exercise everything.
 3. **Command executor**, against a trivial `launch.sh`/`poll.sh`/`find.sh` that runs local
    sleeps. Prove re-attach by killing the controller mid-job.
-4. **Coding agent + diff review + sandbox** (doc 08). The first point at which untrusted code runs.
+4. **Coding agent + repair iteration + diff review + sandbox** (docs 06, 08). The first point at
+   which untrusted code runs, and the first at which a false null is possible — the fidelity check
+   ships with the agent, not after it.
 5. **Proposer + research summary**, with mode-collapse defenses from the start — they are not a
    later refinement, they are what makes a pure-LLM proposer viable at all.
 6. **Objective, aggregation, confirmation** (doc 07).

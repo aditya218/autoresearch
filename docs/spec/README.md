@@ -9,8 +9,9 @@ Two loops:
 - **Outer loop** — an autonomous search for a better solution: read the ledger of prior
   experiments, propose a new hypothesis, materialize it into an experiment, evaluate, repeat.
 
-All state lives in a durable, append-only **research ledger**. A campaign can be killed at
-any instant and resumed with minimal to no wasted work.
+All of it is recorded in a durable **research ledger** — state tables in Postgres holding current
+truth, alongside an append-only transition log for debugging. A campaign can be killed at any
+instant and resumed with minimal to no wasted work.
 
 ## The shape of one experiment
 

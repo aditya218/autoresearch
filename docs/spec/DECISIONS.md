@@ -48,7 +48,8 @@ Required: `launch`, `poll`, `find`, plus `logs` where triage is enabled. Optiona
 `progress`. The engine passes `AUTORESEARCH_IDEM_KEY`; the launcher tags the job with it; `find`
 recovers it after a crash. *Because:* this is the only way to re-attach to
 an 8-hour job rather than relaunch it. *Consequence:* a missing `find` command is a spec error,
-and a lint rule caps local stages at 20 minutes so expensive work cannot hide in-process.
+and a lint rule caps local stages at 20 minutes so expensive work cannot hide in-process —
+`implement` being the one sanctioned exception at 60m (D26).
 
 **D9 — Domain-agnostic core.**
 The engine submits a command, polls a job_id, and reads a metrics file. *Because:* the two named
@@ -58,7 +59,7 @@ contract between them and the engine.
 
 **D22 — Python, minimal dependencies, no workflow framework.**
 *Because:* the durability contract is the product; delegating it to Temporal would create a second
-source of truth competing with the ledger. *Consequence:* the failure-injection suite is mandatory.
+source of truth competing with the state tables. *Consequence:* the failure-injection suite is mandatory.
 
 ## The experiment
 
