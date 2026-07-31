@@ -75,7 +75,7 @@ stages:
     launch:  "./scripts/launch.sh --commit {{ commit_sha }} --config {{ config_path }}"
     poll:    "./scripts/status.sh {{ job_id }}"
     # cancel: optional in v1 (D24) — jobs run to completion
-    find:    "./scripts/find.sh --tag {{ idem_key }}"
+    find:    "./scripts/find.sh --tag {{ idem_key }}"   # optional; see doc 04 §2 tiers
     timeout: 8h
     poll_interval: 60s
     retries: { max: 3, on: [infra] }
@@ -104,11 +104,10 @@ terminal: [analyze]
    controller crash mid-implement discards up to an hour of agent work. That is LLM tokens and
    build time, not GPU-hours, and controller crashes are rare — cheap enough to accept, and far
    cheaper than the alternative of making a sandboxed multi-turn agent session re-attachable.
-3. **Every `external_job` must declare `launch`, `poll`, and `find`.** Missing `find` is a spec
-   error, not a warning — without it, exactly-once launch is impossible (doc 04) and a crash in
-   the launch window leaks a running job. `cancel` is optional (D24); declaring it enables early
-   kill and hard stop, and its absence is recorded on the campaign so reports state honestly that
-   budget ceilings were admission-only.
+3. **Every `external_job` must declare `launch` and `poll`.** `find` is optional but recommended;
+   without it the engine falls back to the receipt file, and without that to relaunch-and-flag
+   (doc 04 §2). Which tier a workflow lands in is recorded on the campaign, so a report can state
+   honestly what its recovery guarantee was. `cancel` is likewise optional (D24).
 4. **Exactly one stage produces metrics**, and its output must typecheck against the project
    metric registry. An experiment that cannot produce comparable metrics is not an experiment.
 5. **`retries.on` may only list `infra`.** Retrying an `experiment` failure re-runs a
@@ -130,7 +129,7 @@ commands and a metrics file.
 | `launch` | `AUTORESEARCH_IDEM_KEY`, `commit_sha`, `config_path`, `artifact_dir` in env | the `job_id` on stdout, alone on the last line | 0 on successful submission |
 | `poll` | `job_id` | one of `PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `KILLED` | 0 if the status was determined |
 | `cancel` *(optional, D24)* | `job_id` | — | 0 if cancelled or already terminal |
-| `find` | `AUTORESEARCH_IDEM_KEY` | the `job_id` if a job carries this tag, nothing otherwise | 0 either way |
+| `find` *(optional, recommended)* | `AUTORESEARCH_IDEM_KEY` | the `job_id` if a job carries this tag, nothing otherwise | 0 either way |
 
 **The launcher must tag the submitted job with `AUTORESEARCH_IDEM_KEY`** — as a label, a job
 name, or a comment field, whatever the scheduler supports — so that `find` can recover it. This

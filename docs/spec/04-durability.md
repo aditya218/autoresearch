@@ -65,22 +65,62 @@ The invariant, for any action outside the database:
 > On recovery, resolve ambiguity by looking the key up in the external system.
 
 ```
-1. append StageLaunchIntent{ idempotency_key = K }              [committed]
-2. AUTORESEARCH_IDEM_KEY=K ./scripts/launch.sh ... -> job_id     [ambiguous window]
-3. append StageLaunched{ job_id }                                [committed]
+1. INSERT stage_execution(state = LAUNCH_INTENT, idempotency_key = K)   [committed]
+2. ./scripts/launch.sh …  ->  xid                                       [ambiguous window]
+3. UPDATE stage_execution SET job_id = xid, state = LAUNCHED            [committed]
 ```
 
-A crash between 1 and 3 leaves the stage in `LAUNCH_INTENT` — the one ambiguous state, and with
-1–8 hour jobs (D7) an unresolved one means a GPU job running with nobody watching it. Recovery
-uses the `find` command (D11):
+A crash between 1 and 3 leaves the stage in `LAUNCH_INTENT`: a job may or may not be running, and
+the ledger cannot tell. With 1–8 hour jobs (D7) the bad outcome is a GPU job nobody is watching.
+
+**How big is this window, honestly?** Between `launch.sh` returning and the commit, milliseconds.
+The wider and more realistic case is a crash *during* `launch.sh` itself, where submission may
+already have landed — seconds, and correlated with the kinds of crash (OOM, eviction, deploy) that
+are likelier while a subprocess is running. Across a few hundred launches per campaign this is
+rare, and its cost is one wasted job, not a corrupted campaign.
+
+That severity is why resolution is **tiered**, cheapest first.
+
+### Tier 1 — the launcher's receipt (recommended default)
+
+`launch.sh` writes the xid to `{artifact_dir}/launch/{idempotency_key}.xid` before it exits. The
+engine reads the file rather than trusting stdout alone.
 
 ```
 for each stage_execution in LAUNCH_INTENT:
-    job_id = AUTORESEARCH_IDEM_KEY=K ./scripts/find.sh
-    if job_id and poll(job_id) is alive:     append StageReattached{job_id}  -> LAUNCHED
-    if job_id and poll(job_id) is terminal:  ingest outputs   -> COMPLETED | FAILED
-    if no job_id:                            re-launch with the same K  -> exactly-once
+    if receipt file exists:  adopt xid -> poll it -> LAUNCHED | COMPLETED | FAILED
+    else:                    re-launch                       -> no double-spend
 ```
+
+Costs one line in the launcher, needs no settable job name, no lookup tool, and works with any
+scheduler. It narrows the ambiguous window to "submission landed but the launcher died before its
+own final local write" — much smaller than the original, and no longer spanning a network call.
+
+> This does not violate "the filesystem is never authoritative for state" (doc 01). The receipt is
+> not state; it is evidence about an external effect, playing the same role as `find`. The state
+> machine still lives entirely in Postgres.
+
+### Tier 2 — `find` by tag (optional, strongest)
+
+Where the launcher can tag jobs with `AUTORESEARCH_IDEM_KEY` and a lookup tool can retrieve them,
+`find` closes the window completely, including the case where the launcher process itself dies
+mid-submission:
+
+```
+job_id = AUTORESEARCH_IDEM_KEY=K ./scripts/find.sh
+if job_id and alive:     adopt  -> LAUNCHED
+if job_id and terminal:  ingest -> COMPLETED | FAILED
+if no job_id:            re-launch
+```
+
+This is cheap for anyone who already has "list jobs by user or status" — it is a filter over an
+existing tool, not a new integration.
+
+### Tier 3 — relaunch and flag
+
+With neither, recovery relaunches and records `possible_orphan` with the timestamp and prior
+attempt, raising an alert. The duplicate runs to completion — there is no cancel (D24) — and a
+human reconciles. Documented as the weakest tier so nobody is surprised by an unexplained job.
 
 ### Idempotency key construction
 
@@ -101,12 +141,10 @@ covers what the hash was guarding against.
 The `ar-` prefix is load-bearing for orphan reaping below — it is what distinguishes engine jobs
 from everything else running under the same account.
 
-The engine passes `K` to `launch.sh` as `AUTORESEARCH_IDEM_KEY`, and **the launcher must tag the
-submitted job with it** — a label, a job name, a comment field, whatever the scheduler supports —
-so that `find.sh` can return it later (D11). This is the only requirement the engine places on
-your infrastructure. A workflow declaring an `external_job` stage without a `find` command fails
-spec validation, because without it exactly-once launch is unachievable and the durability
-guarantee is a fiction.
+The engine always passes `K` to `launch.sh` as `AUTORESEARCH_IDEM_KEY`. What the launcher does
+with it determines which recovery tier applies: write it as a receipt filename (tier 1), tag the
+submitted job with it (tier 2), or ignore it (tier 3). The key itself costs nothing to pass, so
+the tiers can be adopted incrementally without changing the engine.
 
 ### Orphan reaping
 

@@ -44,12 +44,32 @@ the proposer brief carries an `in_flight` block with no results in it.
 
 **D4 / D10 / D11 — Stages are either local or external jobs; external jobs are user-supplied
 commands, and exactly-once launch is required.**
-Required: `launch`, `poll`, `find`, plus `logs` where triage is enabled. Optional: `cancel` (D24),
-`progress`. The engine passes `AUTORESEARCH_IDEM_KEY`; the launcher tags the job with it; `find`
-recovers it after a crash. *Because:* this is the only way to re-attach to
-an 8-hour job rather than relaunch it. *Consequence:* a missing `find` command is a spec error,
+Required: `launch`, `poll`, plus `logs` where triage is enabled. Optional: `find` (D11),
+`cancel` (D24), `progress`. *Because:* re-attaching to an 8-hour job beats relaunching it. *Consequence:* a missing `find` command is a spec error,
 and a lint rule caps local stages at 20 minutes so expensive work cannot hide in-process —
 `implement` being the one sanctioned exception at 60m (D26).
+
+**D11 — Launch recovery is tiered; `find` is recommended, not required.** *(Revised — it was
+originally a spec error to omit it.)*
+
+The ambiguous window is between `launch.sh` returning an xid and the engine committing it. A crash
+there leaves the ledger unable to say whether a job is running. Originally the spec mandated a
+`find` command to resolve it. That over-weighted the risk: the window is milliseconds to seconds
+across a few hundred launches per campaign, and its cost is one wasted job rather than a corrupted
+campaign. Mandating a lookup tool for every integration is real adoption friction for a rare,
+bounded loss.
+
+Three tiers instead, cheapest first. **Receipt file** — `launch.sh` writes the xid to
+`{artifact_dir}/launch/{key}.xid` before exiting; recovery reads it. One line in the launcher, no
+settable job name, no lookup tool, works with any scheduler, and narrows the window to the
+launcher's own final local write. **`find` by tag** — closes the window entirely, including a
+launcher that dies mid-submission; cheap for anyone who already lists jobs by user or status.
+**Relaunch and flag** — record `possible_orphan`, alert, let a human reconcile.
+
+*Consequence:* the engine always passes `AUTORESEARCH_IDEM_KEY`, so tiers are adopted
+incrementally without engine changes. Note the interaction with D24: with no cancel, even a
+detected orphan cannot be killed, so detection buys avoidance of the double-spend rather than
+cleanup.
 
 **D9 — Domain-agnostic core.**
 The engine submits a command, polls a job_id, and reads a metrics file. *Because:* the two named

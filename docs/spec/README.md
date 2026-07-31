@@ -55,7 +55,7 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 | D8 | Concurrency target | **2–4** experiments in flight per campaign. |
 | D9 | Domain | **Domain-agnostic core.** The engine never learns what a job is. |
 | D10 | Stage authoring | **User-supplied commands**: `launch`, `poll`, `find`, plus `logs` for triage. |
-| D11 | Exactly-once launch | **Required.** Engine passes `AUTORESEARCH_IDEM_KEY`; launcher tags the job; `find` recovers it. |
+| D11 | Launch recovery | **Tiered**: receipt file (default) → `find` by tag (optional) → relaunch and flag. |
 | D12 | Research summary | **LLM-maintained**, every claim citing experiment_ids, with a periodic drift audit. |
 | D13 | Cross-campaign visibility | **Strict isolation**, except a forked campaign inherits its parent's ledger read-only. |
 | D14 | Human intervention | Humans may **inject hypotheses and steer the proposer** mid-campaign. |
