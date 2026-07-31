@@ -1,0 +1,47 @@
+# Prototype campaign: a local "prepare" stage, an external job, a local "collect".
+objective:
+  primary: { metric: p50_latency_ms, direction: minimize }
+  constraints:
+    - { metric: eval_quality, op: ">=", value: 0.90, kind: guardrail }
+
+budget:
+  max_experiments: 6
+  max_concurrent_experiments: 2
+
+replication:
+  base_seed: 1000
+
+provenance_pins:
+  base_commit: "4a91c02"
+
+workflow:
+  name: prototype-latency
+  version: 1
+  stages:
+    - key: prepare
+      kind: local
+      timeout: 2m
+      command: ["bash", "-c", "echo preparing $AUTORESEARCH_EXPERIMENT; sleep 1"]
+
+    - key: train
+      kind: external_job
+      needs: [prepare]
+      launch: "$FAKEJOB_DIR/launch.sh"
+      poll:   "$FAKEJOB_DIR/status.sh {{ job_id }}"
+      find:   "$FAKEJOB_DIR/find.sh"
+      logs:   "$FAKEJOB_DIR/logs.sh {{ job_id }}"
+      timeout: 30m
+      poll_interval: 2s
+      max_infra_retries: 3
+      status_map:
+        PREEMPTED: infra
+      outputs:
+        metrics: "{{ artifact_dir }}/metrics.json"
+
+    - key: collect
+      kind: local
+      needs: [train]
+      timeout: 2m
+      command: ["bash", "-c", "echo collected"]
+
+  terminal: [collect]

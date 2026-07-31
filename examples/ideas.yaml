@@ -1,0 +1,16 @@
+- statement: "Fuse the KV-cache write into the attention epilogue"
+  structural_family: kernel-fusion
+  priority: 10
+  parameters: { block_size: 256 }
+- statement: "Tile the attention inner loop at 128"
+  structural_family: tiling
+  priority: 8
+  parameters: { block_size: 128 }
+- statement: "Reorder the memory layout to NHWC"
+  structural_family: memory-layout
+  priority: 6
+  parameters: {}
+- statement: "Baseline, unmodified"
+  structural_family: baseline
+  priority: 20
+  parameters: { role: baseline }
