@@ -1,8 +1,5 @@
 # 07 — Objectives, Noise, and Validity
 
-> **Status:** the mechanism is settled; thresholds and the held-out policy depend on
-> `OPEN-QUESTIONS.md` Q1 (domains) and Q8 (experiment duration).
-
 This document covers the largest gap in the original design — there was no definition of what a
 *result* is — and the largest scientific risk in any autonomous research loop: the engine
 optimizing something other than what you meant.
@@ -25,7 +22,13 @@ Defined at the project so results are comparable across campaigns.
 ```
 
 A campaign may **select** and **constrain** metrics but may not redefine a metric's meaning, unit,
-or direction. Doing so would silently invalidate cross-campaign comparison, so it is rejected.
+or direction. Under strict campaign isolation (D13) this is not about cross-campaign comparison —
+it is about the project's own history staying legible, and about a forked campaign inheriting its
+parent's ledger without the numbers silently changing meaning.
+
+Because the core is domain-agnostic (D9), the engine's only view of a metric is the JSON your
+`metrics.json` emits, typechecked against this registry. Everything else about it is your
+scripts' business.
 
 ## Objective spec (campaign level)
 
@@ -51,10 +54,11 @@ or direction. Doing so would silently invalidate cross-campaign comparison, so i
   result. Marking it failed would hide a real finding.
 - **`min_improvement`** stops the leaderboard churning on noise-sized deltas and stops the
   proposer chasing them.
-- **Multi-objective** (a true Pareto frontier rather than constrained scalar) is deferred.
-  Constrained-scalar covers the stated use cases; if a project genuinely needs a frontier, the
+- **Multi-objective is out of scope** (D23). Constrained scalar covers the stated use cases and
+  keeps the leaderboard a simple ranking. If a project later needs a true Pareto frontier, the
   leaderboard projection becomes a non-dominated set and the proposer is asked to expand the
-  frontier rather than to beat a scalar. Flagged in open questions.
+  frontier rather than beat a scalar — a contained change to two components, which is why it is
+  safe to defer.
 
 ---
 
@@ -85,7 +89,7 @@ that raises the number without solving the problem is, from its perspective, a s
 | Overfitting the eval set across many experiments | **Held-out set the proposer never sees.** Report dev metrics during search; validate the winner on held-out before declaring it. Divergence between dev and held-out is itself a logged finding |
 | Train/test contamination introduced by generated code | Contamination checks as a mandatory workflow stage; dataset fingerprinting; provenance pinning of dataset_version |
 | Gaming the metric (special-casing the benchmark, caching the answer, disabling the check) | Guardrail metrics the objective does not reward; a `verify` stage that re-runs the metric independently of the code under test; diff review on generated code for suspicious patterns |
-| Weakening the test rather than fixing the code | Treat test/benchmark files as protected paths; any diff touching them is flagged for approval |
+| Weakening the test rather than fixing the code | Test, benchmark, and metric-extraction files are protected paths; the `review` stage rejects any diff touching them (doc 08) |
 | Cherry-picking seeds | Engine owns seed selection; the workflow cannot choose its own seeds |
 | Winner's curse across many experiments | **Confirmation runs** (below) |
 | Silent environment drift making old results incomparable | Provenance drift detection (`06-inner-loop.md`) |
@@ -121,6 +125,7 @@ Campaign <id> — <objective> — stopped: converged (no improvement in 40)
 Baseline:  p50 142.0ms  (n=5, ±2.1)
 Winner:    exp_0173     p50 118.4ms (n=5, ±3.0)  −16.6%  [confirmed, held-out]
            guardrails:  eval_quality 0.937 ✓   peak_memory 31.2GB ✓
+           branch:      autoresearch/{campaign_id}/exp_0173  @ 9f2c1ab
            change:      fused KV-cache epilogue, block_size=256
            lineage:     hyp_0161 <- exp_0084, exp_0119
 Runner-up: exp_0155     p50 121.0ms (n=5, ±2.8)  not significantly different from winner

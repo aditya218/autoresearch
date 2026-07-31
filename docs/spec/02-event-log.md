@@ -81,7 +81,7 @@ END $$ LANGUAGE plpgsql;
 | `CampaignCreated` | project_id, config, config_hash, parent_campaign_id |
 | `CampaignStarted` | |
 | `CampaignPaused` / `CampaignResumed` | actor, reason |
-| `CampaignBudgetAdjusted` | field, old, new, actor — the only sanctioned config mutation |
+| `CampaignConfigAmended` | field, old, new, actor — only fields in D18's editable column |
 | `CampaignStopped` | stop_reason, final_leaderboard_snapshot |
 | `RunStarted` | worker_identity, engine_version, fencing_token |
 | `RunHeartbeat` | *(not logged — heartbeats hit `campaign_lease` only; too high-volume)* |
@@ -92,7 +92,7 @@ END $$ LANGUAGE plpgsql;
 
 | Event | Payload highlights |
 | --- | --- |
-| `HypothesisProposed` | statement, rationale, parameters, predicted_effect, derived_from, **proposer_context_ref** |
+| `HypothesisProposed` | statement, rationale, change_spec, structural_family, parameters, predicted_effect, derived_from, **proposer_context_ref** |
 | `HypothesisQueued` | priority |
 | `HypothesisRejected` | reason (`duplicate` \| `out_of_budget` \| `policy` \| `unsafe` \| `low_value`), duplicate_of |
 | `HypothesisClaimed` | run_id, lease_expires_at |
@@ -101,17 +101,21 @@ END $$ LANGUAGE plpgsql;
 | `HypothesisExpired` | staleness_metric |
 | `HypothesisMaterialized` | experiment_ids[] |
 
-`proposer_context_ref` is a content-addressed pointer to the *exact* prompt/context the proposer
-saw. Without it, proposer behaviour is unreproducible and undebuggable.
+`proposer_context_ref` is a path plus content hash pointing at the *exact* brief the proposer saw.
+Without it, proposer behaviour is unreproducible and undebuggable — and with a pure-LLM proposer
+(D6) the brief is the only thing that determines what gets tried next.
 
 ### Experiment
 
 | Event | Payload highlights |
 | --- | --- |
-| `ExperimentCreated` | hypothesis_id, role, resolved_config, resolved_config_hash, provenance, workflow_version |
+| `ExperimentCreated` | hypothesis_id, role, branch, base_commit, resolved_config, provenance, workflow_version |
 | `ExperimentAdmitted` | slot, budget_reserved |
-| `ExperimentResultReused` | source_experiment_id, reason — cache hit, no execution |
 | `ExperimentStarted` | |
+| `ExperimentImplemented` | commit_sha, diff_hash, diff_path, files_changed, lines_changed |
+| `DiffReviewPassed` | checks_run, flags |
+| `DiffReviewRejected` | check, detail — protected path, secret, gaming heuristic (doc 08) |
+| `ExperimentResultReused` | source_experiment_id, matched_on (`diff_hash`) — cache hit, no job launched |
 | `ReplicateStarted` / `ReplicateFinished` | seed, outcome, metrics, cost |
 | `ExperimentMetricsRecorded` | aggregated metrics, dispersion, guardrail evaluation |
 | `ExperimentSucceeded` | metrics, cost, artifacts |
@@ -189,6 +193,7 @@ Rules:
 ### Retention
 
 The log is the permanent record; artifacts are not. Events are retained indefinitely
-(they are small). Large artifacts live in content-addressed object storage with a per-project
-retention policy, and the log stores only refs. A garbage-collected artifact leaves the log
+(they are small). Large artifacts live on the distributed filesystem under the campaign
+directory (D16) with a per-project retention policy, and the log stores only paths plus an
+integrity hash. A garbage-collected artifact leaves the log
 valid with a dangling-but-labelled ref rather than a broken projection.

@@ -65,19 +65,21 @@ The invariant, for any action outside the database:
 > On recovery, resolve ambiguity by looking the key up in the external system.
 
 ```
-1. append StageLaunchIntent{ idempotency_key = K }        [committed]
-2. launch external job, labelled autoresearch/idem-key=K   [ambiguous window]
-3. append StageLaunched{ external_handle }                 [committed]
+1. append StageLaunchIntent{ idempotency_key = K }              [committed]
+2. AUTORESEARCH_IDEM_KEY=K ./scripts/launch.sh ... -> job_id     [ambiguous window]
+3. append StageLaunched{ job_id }                                [committed]
 ```
 
-A crash between 1 and 3 leaves the stage in `LAUNCH_INTENT` — the one ambiguous state. Recovery:
+A crash between 1 and 3 leaves the stage in `LAUNCH_INTENT` — the one ambiguous state, and with
+1–8 hour jobs (D7) an unresolved one means a GPU job running with nobody watching it. Recovery
+uses the `find` command (D11):
 
 ```
 for each stage_execution in LAUNCH_INTENT:
-    job = external_system.find_by_label("autoresearch/idem-key", K)
-    if job exists and is alive:  append StageReattached{handle, via=external_scan}  -> LAUNCHED
-    if job exists and terminal:  ingest its outputs                -> COMPLETED | FAILED
-    if no job exists:            re-launch with the same key K     -> stays exactly-once
+    job_id = AUTORESEARCH_IDEM_KEY=K ./scripts/find.sh
+    if job_id and poll(job_id) is alive:     append StageReattached{job_id}  -> LAUNCHED
+    if job_id and poll(job_id) is terminal:  ingest outputs   -> COMPLETED | FAILED
+    if no job_id:                            re-launch with the same K  -> exactly-once
 ```
 
 ### Idempotency key construction
@@ -91,17 +93,22 @@ without needing to remember anything. `attempt` is included so an intentional re
 effect; `inputs_hash` is included so a stage that would run with different inputs cannot collide
 with a previous execution.
 
-Every external integration must support **one** of: (a) client-supplied idempotency token,
-(b) queryable user labels/tags, or (c) deterministic resource naming. An integration with none of
-these cannot be an `external_job` stage — it must be wrapped by something that can, because
-otherwise exactly-once launch is unachievable and the durability guarantee is a fiction.
+The engine passes `K` to `launch.sh` as `AUTORESEARCH_IDEM_KEY`, and **the launcher must tag the
+submitted job with it** — a label, a job name, a comment field, whatever the scheduler supports —
+so that `find.sh` can return it later (D11). This is the only requirement the engine places on
+your infrastructure. A workflow declaring an `external_job` stage without a `find` command fails
+spec validation, because without it exactly-once launch is unachievable and the durability
+guarantee is a fiction.
 
 ### Orphan reaping
 
-A background sweep lists external jobs labelled with this campaign and no live `stage_execution`
-in a non-terminal state — the residue of a zombie run or a botched recovery. Each is logged as
-`StageOrphanDetected` and either adopted (if it matches a stage awaiting work) or killed. Without
-this, a crash loop silently leaks GPU-hours.
+A background sweep calls `find` for every non-terminal stage's key and compares against jobs the
+scheduler reports for this campaign. A running job with no live `stage_execution` — the residue of
+a zombie run or a botched recovery — is logged as `StageOrphanDetected` and either adopted (if it
+matches a stage awaiting work) or killed.
+
+This is the most expensive failure mode in the system, not the most exotic one: a crash loop that
+leaks 8-hour GPU jobs will spend real money for a weekend before anyone notices.
 
 ---
 
@@ -110,17 +117,17 @@ this, a crash loop silently leaks GPU-hours.
 | Failure | Cheap-path recovery | Work lost |
 | --- | --- | --- |
 | Controller crash, external stage running | Re-attach via label scan | **None** |
-| Controller crash, in-process stage running | Re-execute the stage | That stage only |
+| Controller crash, local stage running | Re-execute the stage | That stage only (≤20 min by lint rule) |
 | Controller crash between stages | Resume at next PENDING stage | None |
 | External job killed (spot preemption) | Retry as `infra_failure`; resume from stage checkpoint if the stage supports one | Stage progress since last checkpoint |
 | Postgres failover | Reconnect; uncommitted appends retried by key | None |
 | Whole region gone | Replay log in new region; external handles dead; stages retried | All in-flight external work |
 
 The design target is the first row. **The single most important rule that follows: expensive work
-belongs in `external_job` stages.** An in-process stage is only appropriate for work cheap enough
-to redo — prompt construction, config resolution, analysis, small evals. This should be enforced
-by lint on the workflow spec: an `in_process` stage declaring an expected duration above a
-threshold (default 10 minutes) is a spec error.
+belongs in `external_job` stages.** A local stage is only appropriate for work cheap enough to
+redo — writing the change, reviewing the diff, compiling, analysis. This should be enforced
+by lint on the workflow spec: a `local` stage declaring an expected duration above a
+threshold (default 20 minutes) is a spec error.
 
 ### Stage-level checkpointing (optional, per stage)
 
@@ -143,7 +150,7 @@ A run performs this deterministically on start, before doing any new work:
       LAUNCH_INTENT  -> external scan by idempotency key (see above)
       LAUNCHED       -> poll handle; dead & not terminal -> infra_failure -> retry
       RUNNING        -> poll handle; resume polling loop
-      in_process non-terminal -> mark attempt failed(infra), schedule attempt+1
+      local non-terminal      -> mark attempt failed(infra), schedule attempt+1
 6.  RECONCILE EXPERIMENTS:
       all replicates terminal but experiment not -> resume at AGGREGATING
       ADMITTED with no replicates started        -> start them

@@ -114,7 +114,7 @@ CREATED ──admit──> ADMITTED ──> RUNNING ──> AGGREGATING ──> 
 | --- | --- |
 | `CREATED` | Materialized from a hypothesis; config resolved; not yet holding a slot |
 | `ADMITTED` | Holds a concurrency slot and a budget reservation |
-| `RUNNING` | ≥1 replicate executing the workflow |
+| `RUNNING` | ≥1 replicate executing the workflow. The `implement` and `review` stages happen here — an experiment has no commit until `implement` completes, and a `review` rejection ends it as `experiment_failure` before any job is launched |
 | `AGGREGATING` | All replicates terminal; computing metrics, guardrails, analysis |
 | `SUCCEEDED` | Workflow completed, metrics recorded, guardrails evaluated |
 | `FAILED` | See failure taxonomy below |
@@ -130,7 +130,7 @@ draw wrong conclusions and burn money on doomed retries.
 | Class | Example | Retried? | Charged to budget? | Shown to proposer? |
 | --- | --- | --- | --- | --- |
 | `infra_failure` | OOM-killed node, image pull error, cloud quota, network | **Yes**, with backoff, capped attempts | Cost incurred is charged; the experiment slot is not consumed | **No** — it is not a research result |
-| `experiment_failure` | Generated code doesn't compile; training diverges; eval crashes on the new config | No (a retry would fail identically) | Yes | **Yes** — a real, informative negative result |
+| `experiment_failure` | Generated code doesn't compile; diff review rejects it; training diverges; eval crashes | No (a retry would fail identically) | Yes | **Yes** — a real, informative negative result. "You may not modify the benchmark" is exactly the feedback that improves the next proposal |
 | `aborted` | Budget hit mid-flight; operator kill | No | Partial cost charged | As "not evaluated", never as a negative result |
 
 Ambiguous cases resolve to `infra_failure` **at most N times** (default 3), after which they are
@@ -178,11 +178,11 @@ PENDING ──intent──> LAUNCH_INTENT ──launch──> LAUNCHED ──obs
 | `LAUNCH_INTENT` | Intent committed with an idempotency key; **the side effect may or may not have happened.** The only genuinely ambiguous state, and recovery resolves it by scanning the external system for the key |
 | `LAUNCHED` | External handle recorded (or in-process task started) |
 | `RUNNING` | Confirmed executing |
-| `COMPLETED` | Outputs recorded and content-addressed |
+| `COMPLETED` | Outputs written to the stage directory and recorded in the ledger |
 | `FAILED` | With failure class; retry creates a **new** stage_execution row with `attempt + 1`, never mutates this one |
 | `CANCELLED` | Experiment aborted or campaign killed |
 
-For `in_process` stages, `LAUNCH_INTENT → LAUNCHED` is instantaneous and recovery from
+For `local` stages, `LAUNCH_INTENT → LAUNCHED` is instantaneous and recovery from
 `LAUNCH_INTENT` or `RUNNING` means **re-execute from the start of the stage** — which is exactly
 why expensive work must not be an in-process stage. For `external_job` stages, recovery means
 **re-attach**, and no work is lost. See `04-durability.md`.
