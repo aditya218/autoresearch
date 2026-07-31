@@ -91,6 +91,7 @@ that raises the number without solving the problem is, from its perspective, a s
 | Gaming the metric (special-casing the benchmark, caching the answer, disabling the check) | Guardrail metrics the objective does not reward; a `verify` stage that re-runs the metric independently of the code under test; diff review on generated code for suspicious patterns |
 | Weakening the test rather than fixing the code | Test, benchmark, and metric-extraction files are protected paths; the `review` stage rejects any diff touching them (doc 08) |
 | Cherry-picking seeds | Engine owns seed selection; the workflow cannot choose its own seeds |
+| Emitting log lines that get a real failure triaged as `infra`, earning a retry | Evidence must verify against the log; retry ceiling applies regardless of the verdict (doc 08 §3) |
 | Winner's curse across many experiments | **Confirmation runs** (below) |
 | Silent environment drift making old results incomparable | Provenance drift detection (`06-inner-loop.md`) |
 

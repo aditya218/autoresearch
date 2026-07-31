@@ -91,6 +91,27 @@ context limit, which makes its integrity load-bearing.
 **D19 — Deliverable is a report plus the winning branch.** The engine does not open PRs.
 *Consequence:* it never needs write access beyond pushing `autoresearch/*` branches.
 
+**D24 — No cancel in v1. Jobs run to completion.**
+*Because:* the kill tool exists but is not worth wiring up yet; some wasted resources are
+acceptable. *Consequence, stated plainly:* **every stop path gates admission, not execution.**
+Pause, stop, budget exhaustion, the circuit breaker, and the kill switch all halt new work and
+none of them halt running work. Budget becomes a soft ceiling with an overshoot of up to
+`concurrency × max_experiment_cost` (doc 08 §4), `kill_criteria` is recorded but not enforced, and
+the orphan reaper becomes read-only — which incidentally removes the risk of it killing a job it
+should not have. Stopping a campaign now requires the controller to stay alive *longer*, draining
+in-flight work rather than abandoning results already paid for.
+
+**D25 — Failure classification is a status map, then an agent that reads logs, then a hard
+ceiling.**
+Unambiguous statuses (`preempted`, quota errors) map directly. Ambiguous ones (`error`, `failed`)
+escalate to a triage agent that fetches the log and returns a class plus a verifiable evidence
+quote. *Because:* the distinction decides both retry behaviour and what the proposer learns, and
+status alone cannot supply it. *Consequence:* `logs` becomes a required command, and job logs
+become untrusted input to an LLM — written by code the coding agent authored, which has an
+incentive to be classified `infra` and earn a retry. The `max_infra_reclassify` ceiling stays
+absolute regardless of the verdict; it is the only control that bounds the damage rather than
+merely raising the cost (doc 08 §3).
+
 ## Operations
 
 **D15 — Scheduling delegated entirely.** The engine tracks concurrency slots and budget; your
@@ -120,6 +141,11 @@ anywhere" in one screen.
 1. **Sandbox implementation.** Container runtime vs. namespaces vs. rlimits-only for local stages
    depends on what the host environment supports. Doc 08 specifies the policy; the mechanism is an
    implementation choice.
+2. **Job name constraints.** Whether the launcher accepts a settable job name, and its length and
+   character limits. The `ar-{campaign}-{experiment}-{stage}-{attempt}` key assumes it does; a
+   truncated-hash fallback works if not.
+3. **Status vocabulary.** The exact set your polling tool returns, to fill in the `status_map`.
+   Known so far: something for `error`, `preempted`, and `failed`.
 2. **Which repo and base commit** the first campaign targets, and what its protected-path list is.
 3. **Embedding model for near-dedup**, and the similarity threshold. Needs calibration against
    real proposals — set it from observed duplicate rates in the first campaign rather than

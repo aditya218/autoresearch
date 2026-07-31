@@ -78,7 +78,7 @@ autoresearch campaign create --project <id> --config campaign.yaml   # validates
 autoresearch campaign start   <id>                                   # freezes config, ACTIVE
 autoresearch campaign pause   <id>                                   # gates admission, not execution
 autoresearch campaign resume  <id>
-autoresearch campaign stop    <id> [--drain | --abort-in-flight]
+autoresearch campaign stop    <id>       # drains; in-flight jobs run to completion (D24)
 autoresearch campaign fork    <id> --edit objective.target=0.95      # for frozen fields (D18)
 autoresearch campaign amend   <id> --set budget.max_cost_usd=8000    # for editable fields
 autoresearch campaign status  <id>
@@ -97,7 +97,7 @@ autoresearch exp diff    <id>            # the agent's change
 autoresearch exp logs    <id> [--stage train]
 autoresearch exp invalidate <id> --reason contamination
 
-autoresearch kill        --campaign <id>  # cancel all jobs, abort in-flight
+autoresearch kill        --campaign <id>  # halt admission now; in-flight jobs still complete
 autoresearch ledger replay --campaign <id> --as-of <event_id>
 autoresearch ledger verify --campaign <id>   # rebuild projections, diff against live
 ```
@@ -153,8 +153,8 @@ notices for a day.
    fake in-memory executor and no agents. Nothing else works if this is wrong.
 2. **Control loop + lease + recovery**, including the failure-injection suite (doc 04 §6). Still
    no agents: a stub proposer emitting fixed hypotheses is enough to exercise everything.
-3. **Command executor**, against a trivial `launch.sh`/`poll.sh`/`cancel.sh`/`find.sh` that runs
-   local sleeps. Prove re-attach by killing the controller mid-job.
+3. **Command executor**, against a trivial `launch.sh`/`poll.sh`/`find.sh` that runs local
+   sleeps. Prove re-attach by killing the controller mid-job.
 4. **Coding agent + diff review + sandbox** (doc 08). The first point at which untrusted code runs.
 5. **Proposer + research summary**, with mode-collapse defenses from the start — they are not a
    later refinement, they are what makes a pure-LLM proposer viable at all.

@@ -18,14 +18,22 @@ DRAFT ──start──> ACTIVE ⇄ PAUSED
 | `DRAFT` | Config mutable. No runs, no experiments. |
 | `ACTIVE` | Config frozen. Runs may acquire the lease and drive work. |
 | `PAUSED` | No new hypotheses proposed, no new experiments admitted. **In-flight experiments continue** — killing paid-for work to honour a pause is waste. |
-| `STOPPING` | Draining. In-flight experiments either finish or are aborted per `stop_policy`. |
+| `STOPPING` | Draining. In-flight experiments **run to completion** — there is no cancel in v1 (D24). The controller stays alive to collect their results. |
 | `COMPLETED` | Terminal. `stop_reason` set. Leaderboard snapshotted into `CampaignStopped`. |
 | `ARCHIVED` | Terminal + cold. Artifacts eligible for GC; log retained. |
 
 `stop_reason` ∈ `budget_exhausted` | `converged` | `target_reached` | `manual` | `fatal_error`.
 
-**Pause semantics are a deliberate choice**: pause gates *admission*, not *execution*. A "stop
-everything now" need is served by the kill switch, which aborts in-flight work explicitly.
+**Every stop path gates admission, not execution** (D24). Pause, stop, budget exhaustion, the
+circuit breaker, and the kill switch all stop *new* work; none of them stop work already running.
+Without a cancel command there is no mechanism that could, and pretending otherwise would be worse
+than stating it.
+
+The operational consequence is counterintuitive: **stopping a campaign requires the controller to
+stay alive longer, not exit sooner.** In-flight experiments represent hours of compute already
+paid for, and abandoning the controller throws away results that are minutes from being recorded.
+`STOPPING` therefore drains — polling to completion, recording metrics — and only then reaches
+`COMPLETED`.
 
 ---
 
@@ -118,7 +126,7 @@ CREATED ──admit──> ADMITTED ──> RUNNING ──> AGGREGATING ──> 
 | `AGGREGATING` | All replicates terminal; computing metrics, guardrails, analysis |
 | `SUCCEEDED` | Workflow completed, metrics recorded, guardrails evaluated |
 | `FAILED` | See failure taxonomy below |
-| `ABORTED` | Stopped by budget exhaustion, kill switch, or operator |
+| `ABORTED` | Never entered before an external job launches in v1 (D24); reachable only pre-launch — diff review rejection, admission withdrawal, or campaign kill before the `train` stage starts |
 | `INVALIDATED` | Retracted after the fact. Excluded from the leaderboard, retained in the log |
 
 ### Failure taxonomy

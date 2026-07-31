@@ -85,13 +85,21 @@ for each stage_execution in LAUNCH_INTENT:
 ### Idempotency key construction
 
 ```
-K = sha256(campaign_id, experiment_id, replicate_id, stage_key, attempt, inputs_hash)
+K = ar-{campaign_id[:8]}-{experiment_id[:8]}-{stage_key}-{attempt}
 ```
 
-Deterministic and derivable from state alone, so a recovering run computes the identical key
-without needing to remember anything. `attempt` is included so an intentional retry is a distinct
-effect; `inputs_hash` is included so a stage that would run with different inputs cannot collide
-with a previous execution.
+Structured rather than hashed, deliberately. The requirement is only that the key be
+**deterministic and derivable from state alone**, so a recovering run computes the identical key
+without remembering anything — a hash was one way to achieve that, not the point. A structured
+name is greppable in your existing job tooling, so an operator looking at a running job at 2am can
+see which experiment it belongs to without consulting the ledger.
+
+`attempt` makes an intentional retry a distinct effect. There is no `inputs_hash`: in this design
+a change of inputs means a new commit, which means a new experiment, so the experiment id already
+covers what the hash was guarding against.
+
+The `ar-` prefix is load-bearing for orphan reaping below — it is what distinguishes engine jobs
+from everything else running under the same account.
 
 The engine passes `K` to `launch.sh` as `AUTORESEARCH_IDEM_KEY`, and **the launcher must tag the
 submitted job with it** — a label, a job name, a comment field, whatever the scheduler supports —
@@ -102,13 +110,25 @@ guarantee is a fiction.
 
 ### Orphan reaping
 
-A background sweep calls `find` for every non-terminal stage's key and compares against jobs the
-scheduler reports for this campaign. A running job with no live `stage_execution` — the residue of
-a zombie run or a botched recovery — is logged as `StageOrphanDetected` and either adopted (if it
-matches a stage awaiting work) or killed.
+A background sweep lists running jobs for the engine's account and compares them against
+non-terminal `stage_execution` rows. A running job with no live stage — the residue of a zombie run
+or a botched recovery — is logged as `StageOrphanDetected` and adopted if it matches a stage
+awaiting work.
 
-This is the most expensive failure mode in the system, not the most exotic one: a crash loop that
-leaks 8-hour GPU jobs will spend real money for a weekend before anyone notices.
+**Two hard rules, both about not touching things that are not ours:**
+
+1. **The sweep considers only jobs whose name carries the `ar-` prefix.** Job listings are scoped
+   by username, and if the engine runs under a human's account that listing includes jobs they
+   launched by hand. Everything without the prefix is invisible to the reaper, always. Running the
+   engine under its own service account is strongly preferred, but the prefix guard must hold even
+   when it does not.
+2. **The reaper does not kill in v1** (D24). With no cancel command it can only adopt, or record
+   the orphan and let it run to completion. This makes the sweep read-only, which removes the
+   entire class of "the reaper killed the wrong job" failure — worth noting as a real consolation
+   for not having cancel.
+
+A leaked 8-hour GPU job is still the most expensive failure mode in the system, and in v1 the
+mitigation is detection and alerting rather than termination.
 
 ---
 

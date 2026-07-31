@@ -53,7 +53,7 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 | D7 | Experiment duration | **1–8 hours.** Re-attach is essential; checkpointing optional. |
 | D8 | Concurrency target | **2–4** experiments in flight per campaign. |
 | D9 | Domain | **Domain-agnostic core.** The engine never learns what a job is. |
-| D10 | Stage authoring | **User-supplied commands**: `launch`, `poll`, `cancel`, `find`. |
+| D10 | Stage authoring | **User-supplied commands**: `launch`, `poll`, `find`, plus `logs` for triage. |
 | D11 | Exactly-once launch | **Required.** Engine passes `AUTORESEARCH_IDEM_KEY`; launcher tags the job; `find` recovers it. |
 | D12 | Research summary | **LLM-maintained**, every claim citing experiment_ids, with a periodic drift audit. |
 | D13 | Cross-campaign visibility | **Strict isolation**, except a forked campaign inherits its parent's ledger read-only. |
@@ -67,6 +67,8 @@ hypothesis ──> coding agent writes a change on a git branch off a pinned bas
 | D21 | Interface | **CLI + read-only web inspector.** |
 | D22 | Stack | **Python, minimal dependencies.** No workflow framework; the engine owns its control loop. |
 | D23 | Objectives | **Constrained scalar.** One primary metric, others as guardrails. No Pareto frontier. |
+| D24 | Cancelling jobs | **Deferred.** Jobs run to completion; every stop path gates admission, not execution. |
+| D25 | Failure classification | **Status map first, agent triage on ambiguity**, with an absolute retry ceiling behind both. |
 
 ## Design principles
 

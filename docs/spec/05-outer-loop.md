@@ -109,8 +109,10 @@ Three fields earn their place:
   random search with extra steps, and you want to know that by experiment 30, not experiment 300.
 - **`structural_family`** is the mode-collapse instrument. Self-declared, then validated against
   the diff after implementation.
-- **`kill_criteria`** enables early abort. At 1–8 hours per experiment (D7) this is one of the
-  largest budget savings available.
+- **`kill_criteria`** is recorded but **not enforced in v1** (D24) — without a cancel command
+  there is nothing to act on it. It is still worth collecting: the analyst uses it to judge
+  whether an experiment went the way the proposer expected, and it becomes live the moment a
+  cancel tool exists.
 
 ---
 
@@ -194,7 +196,7 @@ Evaluated every tick. First to fire wins; all recorded in `CampaignStopped`.
 | Converged — no leaderboard improvement in N completed experiments | N = 40 |
 | Diversity collapse | M = 5 duplicate-only rounds |
 | Circuit breaker — consecutive infra failures | 5 |
-| Manual stop / kill switch | — |
+| Manual stop / kill switch | Halts admission; in-flight work completes (D24) |
 
 **Confirmation before completion.** On stop, the top candidate is re-run at
 `confirmation_replicates` (default 5) with fresh, disjoint seeds and evaluated on the held-out

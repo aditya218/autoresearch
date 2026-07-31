@@ -72,7 +72,7 @@ stages:
     executor: command
     launch:  "./scripts/launch.sh --commit {{ commit_sha }} --config {{ config_path }}"
     poll:    "./scripts/status.sh {{ job_id }}"
-    cancel:  "./scripts/cancel.sh {{ job_id }}"
+    # cancel: optional in v1 (D24) — jobs run to completion
     find:    "./scripts/find.sh --tag {{ idem_key }}"
     timeout: 8h
     poll_interval: 60s
@@ -96,9 +96,11 @@ terminal: [analyze]
    is a spec error. This is what makes the durability guarantee real rather than aspirational:
    a controller crash re-executes a local stage from scratch. If your build takes 40 minutes,
    it is an `external_job`.
-3. **Every `external_job` must declare all four commands.** `launch`, `poll`, `cancel`, `find`.
-   Missing `find` is a spec error, not a warning — without it, exactly-once launch is impossible
-   (doc 04) and a crash in the launch window leaks a running job.
+3. **Every `external_job` must declare `launch`, `poll`, and `find`.** Missing `find` is a spec
+   error, not a warning — without it, exactly-once launch is impossible (doc 04) and a crash in
+   the launch window leaks a running job. `cancel` is optional (D24); declaring it enables early
+   kill and hard stop, and its absence is recorded on the campaign so reports state honestly that
+   budget ceilings were admission-only.
 4. **Exactly one stage produces metrics**, and its output must typecheck against the project
    metric registry. An experiment that cannot produce comparable metrics is not an experiment.
 5. **`retries.on` may only list `infra`.** Retrying an `experiment` failure re-runs a
@@ -119,7 +121,7 @@ commands and a metrics file.
 | --- | --- | --- | --- |
 | `launch` | `AUTORESEARCH_IDEM_KEY`, `commit_sha`, `config_path`, `artifact_dir` in env | the `job_id` on stdout, alone on the last line | 0 on successful submission |
 | `poll` | `job_id` | one of `PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `KILLED` | 0 if the status was determined |
-| `cancel` | `job_id` | — | 0 if cancelled or already terminal |
+| `cancel` *(optional, D24)* | `job_id` | — | 0 if cancelled or already terminal |
 | `find` | `AUTORESEARCH_IDEM_KEY` | the `job_id` if a job carries this tag, nothing otherwise | 0 either way |
 
 **The launcher must tag the submitted job with `AUTORESEARCH_IDEM_KEY`** — as a label, a job
@@ -127,24 +129,81 @@ name, or a comment field, whatever the scheduler supports — so that `find` can
 is the one requirement the engine places on your infrastructure, and everything in doc 04 §2
 depends on it.
 
+### Post-launch provenance verification
+
+Where the job system records the code version a job ran from, the engine reads it back after
+launch and asserts it equals the `commit_sha` it intended to submit. A mismatch aborts the
+experiment as `invalid` rather than recording a result.
+
+This is cheap and catches the failure that is otherwise undetectable: a launcher bug, or a race
+where the branch moved between commit and submission. Without it, an experiment can silently
+measure code that is not the code the ledger says it measured — and every downstream conclusion
+inherits the error.
+
 ### Optional commands
 
 | Command | Purpose |
 | --- | --- |
-| `progress` | Prints intermediate metrics as JSON; enables `kill_criteria` early abort |
-| `logs` | Prints a log tail, surfaced in the inspector and given to the analyst agent on failure |
+| `progress` | Prints intermediate metrics as JSON. Surfaced in the inspector; enables `kill_criteria` early abort once `cancel` exists |
+| `logs` | Prints a log tail. **Required when any status maps to `triage`** (below). Also surfaced in the inspector and given to the analyst |
 
 ### Failure classification
 
-`poll` returning `FAILED` is ambiguous — the engine cannot tell a diverged training run from a
-preempted node. Resolution, in order:
+The infra-vs-experiment distinction (doc 03) decides both whether to retry and what the proposer
+learns, and job status alone often cannot supply it. A status of `preempted` is unambiguous; a
+status of `error` or `failed` is not — it covers both a node that died and a change that
+diverged. Resolving those requires reading the logs.
 
-1. If the workflow declares `failure_class` for the stage, use it.
-2. If `poll` prints a JSON object with a `class` field (`infra` | `experiment`), trust it. This
-   is the recommended path — your scripts know the difference and the engine does not.
-3. Otherwise classify as `infra` and retry, up to `max_infra_reclassify` attempts (default 3),
-   after which reclassify as `experiment`. Without that ceiling, a genuinely broken change
-   retries forever.
+Three tiers, cheapest first:
+
+**Tier 1 — status is decisive.** `preempted`, `killed`, quota and scheduling errors map straight
+to `infra`. No agent, no cost, no ambiguity. Configured as a status map in the workflow:
+
+```yaml
+    status_map:
+      preempted: infra
+      quota_exceeded: infra
+      succeeded: success
+      error: triage          # ambiguous — escalate
+      failed: triage
+```
+
+**Tier 2 — triage agent.** For statuses mapped to `triage`, a `triage` stage fetches the job log
+via the `logs` command and classifies. It is a local stage: bounded, cheap, and re-runnable, and
+one LLM call against a log tail is negligible next to an 8-hour job.
+
+```yaml
+  - key: triage
+    kind: local
+    handler: autoresearch.agents.triage
+    runs_on: stage_failure          # not a DAG node — invoked on failure of an external stage
+    timeout: 5m
+```
+
+Output is structured and narrow:
+
+```jsonc
+{ "class": "infra" | "experiment" | "unknown",
+  "confidence": 0.0-1.0,
+  "evidence": "verbatim excerpt from the log",
+  "summary": "one line, shown to the proposer if class=experiment" }
+```
+
+`evidence` must be a **verbatim substring of the log**, checked by the engine. A verdict whose
+evidence does not appear in the log is discarded and treated as `unknown` — this is what keeps
+triage anchored to what actually happened rather than to what the model found plausible.
+
+The verdict is recorded as `StageFailureTriaged` with its evidence. A wrong verdict either burns
+budget on doomed retries or teaches the proposer a false negative result, so it must be auditable
+after the fact.
+
+**Tier 3 — the ceiling, which is not optional.** Regardless of what triage says, `infra`
+classification is capped at `max_infra_reclassify` attempts (default 3), after which the failure
+is reclassified `experiment`. Triage is an optimization on top of this backstop, never a
+replacement for it. See doc 08 §3 for why the backstop cannot be removed even if triage proves
+highly accurate.
+
+`logs` is therefore **required** whenever any status maps to `triage`, and optional otherwise.
 
 ### Poll behaviour
 
