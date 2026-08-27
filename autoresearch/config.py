@@ -1,7 +1,8 @@
 """Campaign configuration schema.
 
 The config is the project's whole interface to the engine: what the campaign
-is for, which metrics matter, how ideas are generated, and the workflow DAG.
+is for, which metrics matter, how ideas are generated, and the workflow
+(a chain of phases today - see TODO(dag)).
 Validation is strict and eager - a bad config should fail at `validate` time,
 long before a campaign burns compute on it.
 """
@@ -36,6 +37,8 @@ class PhaseConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: the phase this one runs after. A single predecessor: workflows are
+    #: a linear chain today, not a general DAG (see TODO(dag) below).
     after: str | None = None
     gate: bool = False
 
@@ -130,6 +133,24 @@ class CampaignConfig(BaseModel):
             raise ValueError(
                 f"workflow must have exactly one root phase (no `after:`), found {roots}"
             )
+
+        # TODO(dag): workflows are a linear chain today, not a general DAG.
+        # `after` takes a single phase, and the walk in engine.run_trial
+        # follows one successor. Until that changes, a fan-out has to be
+        # rejected here - accepting it would silently drop every branch but
+        # one, which is worse than not supporting it.
+        successors: dict[str, list[str]] = {}
+        for name, phase in self.workflow.items():
+            if phase.after is not None:
+                successors.setdefault(phase.after, []).append(name)
+        for predecessor, branches in successors.items():
+            if len(branches) > 1:
+                raise ValueError(
+                    f"phases {sorted(branches)} all run after {predecessor!r}: "
+                    f"parallel branches are not supported yet, so only one "
+                    f"would run. Chain them instead "
+                    f"({branches[0]}, then {branches[1]} after {branches[0]})."
+                )
 
         # `after` forms a chain/tree; a cycle shows up as a node that never
         # reaches the root.

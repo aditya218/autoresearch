@@ -81,3 +81,27 @@ def test_bad_yaml_raises_config_error(tmp_path):
     path.write_text("just a string\n")
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def test_parallel_branches_are_rejected_not_silently_dropped():
+    """Workflows are a chain today. Two phases after the same predecessor
+    would leave one silently unrun, so the config is refused instead."""
+    raw = make(
+        a={"agentic": True},
+        b={"after": "a", "uses": "job"},
+        c={"after": "a", "uses": "job"},
+    )
+    with pytest.raises(Exception, match="parallel branches are not supported"):
+        CampaignConfig.model_validate(raw)
+
+
+def test_a_chain_of_the_same_phases_is_fine():
+    """The supported way to express the same work: chain them."""
+    cfg = CampaignConfig.model_validate(
+        make(
+            a={"agentic": True},
+            b={"after": "a", "uses": "job"},
+            c={"after": "b", "uses": "job"},
+        )
+    )
+    assert cfg.phase_order() == ["a", "b", "c"]

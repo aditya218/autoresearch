@@ -2,7 +2,8 @@
 
 **Status:** Agreed design; v0 built end to end. 2026-08-26.
 
-*Built:* the event ledger with crash recovery, replayed state and materialized
+*Built* (workflows are DAGs by design; the walk implements the linear
+case so far): the event ledger with crash recovery, replayed state and materialized
 views, the phase contract, the job-script contract with a toy project for CI,
 `run_trial` (DAG walk, gates, retries, provenance, resume), the campaign loop
 (baseline, admission, budgets, drain, human controls), the pluggable
@@ -191,6 +192,12 @@ workflow:
 - `uses:` references either a **shared phase** from the engine's
   centrally-tested library (launching common job types, running local evals) or
   a **custom phase** the project defines — both built on the same contract.
+- **Phases form a DAG**, so a workflow can fan out (several evaluations of one
+  trained model) and fan in (compare two seeds, then decide). *v0 implements
+  the linear case only*: `after:` takes a single predecessor, and config
+  validation rejects a fan-out rather than silently running one branch. The
+  ledger already supports the general case, so lifting this is a change to
+  `run_trial`'s walk, not to the design (§12).
 - Phases declare the metrics they produce; **key metrics** are bound to
   deterministic phases so they can be trusted.
 
@@ -632,6 +639,13 @@ create a job the ledger doesn't know about.
 
 - **First concrete project** — the campaign that validates the design; config
   schema details get finalized against it.
+- **Parallel phases** — the design is a DAG; v0 implements the linear case,
+  because every workflow written so far has been a chain. Lifting it means
+  `after: [a, b]`, a ready-set walk in place of the cursor in `run_trial`,
+  and running independent phases concurrently within a trial. The ledger
+  needs no change — phase events already carry their own identity — and
+  until then config validation refuses a fan-out rather than running one
+  branch silently.
 - **Replicate runs** — variance estimation for headline metrics; v0 records
   deltas vs parent/baseline only.
 - **Idea staleness** — should the ideator revise or cancel pending backlog

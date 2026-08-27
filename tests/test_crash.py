@@ -23,12 +23,27 @@ from autoresearch.views import ViewWriter
 WRITER = Path(__file__).parent / "_crash_writer.py"
 
 
-@pytest.mark.parametrize("delay", [0.05, 0.15, 0.3])
+def wait_for_writing(path: Path, timeout: float = 10.0) -> None:
+    """Wait until the writer is actually producing events.
+
+    Killing after a fixed delay is a race: under load the subprocess may not
+    have started yet, and a kill before the first write tests nothing.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if path.exists() and path.stat().st_size > 0:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"writer produced nothing within {timeout}s")
+
+
+@pytest.mark.parametrize("delay", [0.0, 0.1, 0.25])
 def test_kill_writer_then_recover(tmp_path, delay):
     path = tmp_path / "ledger" / "events.jsonl"
     proc = subprocess.Popen([sys.executable, str(WRITER), str(path)])
     try:
-        time.sleep(delay)
+        wait_for_writing(path)
+        time.sleep(delay)  # then kill at some arbitrary point mid-stream
     finally:
         os.kill(proc.pid, signal.SIGKILL)
         proc.wait()
@@ -61,7 +76,8 @@ def test_kill_writer_then_recover(tmp_path, delay):
 def test_recovery_is_idempotent(tmp_path):
     path = tmp_path / "events.jsonl"
     proc = subprocess.Popen([sys.executable, str(WRITER), str(path)])
-    time.sleep(0.15)
+    wait_for_writing(path)
+    time.sleep(0.1)
     os.kill(proc.pid, signal.SIGKILL)
     proc.wait()
 

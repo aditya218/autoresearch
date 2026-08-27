@@ -313,6 +313,11 @@ async def run_trial(ctx: TrialContext) -> str:
             )
             return "failed_idea"
 
+        # TODO(dag): one successor, because a workflow is a chain today.
+        # Config validation rejects fan-out, so this never silently drops
+        # a branch; supporting real parallel phases means replacing this
+        # cursor with a ready-set loop over phases whose predecessors have
+        # all passed.
         nexts = ctx.config.next_phases(phase)
         phase = nexts[0] if nexts else None
 
