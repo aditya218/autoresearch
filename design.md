@@ -189,6 +189,21 @@ workflow:
   cost, as above: most ideas die at the cheap step; only survivors reach the
   expensive one. A gate-stopped trial's early results are still in the ledger
   for the ideator to learn from.
+
+**Conditional execution belongs in gates, not in configuration.** The config
+vocabulary is closed: every field means one fixed thing the engine knows how
+to do, which is what keeps it exhaustively validatable. The moment a
+condition needs a predicate — "only run the expensive eval if this improved
+on its parent" — that predicate becomes a gate phase rather than an
+expression in YAML. A gate can be a script or an agent, so it is strictly
+more expressive than any config language would be; it can be run on its own
+with `run-phase`; and its decision is recorded in the ledger with its own
+reasoning, where a predicate that silently failed to match would leave
+nothing to audit.
+
+The limit worth knowing: a gate *stops* a trial, it does not branch. "Run
+the big eval if promising, a cheap fallback otherwise" needs conditional
+edges, which belong with parallel phases (§12) rather than with gates.
 - `uses:` references either a **shared phase** from the engine's
   centrally-tested library (launching common job types, running local evals) or
   a **custom phase** the project defines — both built on the same contract.
@@ -711,6 +726,7 @@ create a job the ledger doesn't know about.
 | Baseline | T000 = workflow on unmodified base code; campaign halts if it fails; index shows deltas vs parent and baseline | No baseline (signal vs noise indistinguishable); replicate runs (deferred) |
 | Ambiguous job failure | Defaults to idea-failure (counts against budget); analysis reclassifies via correction event | Default-infra (budget never binds); automatic classification (not generically possible) |
 | Phase contract | Single validated `result.json` per phase; engine owns all ledger writes | Phases emitting events directly; ad-hoc output parsing |
+| Conditional execution | A gate phase — a script or an agent returning passed/failed | A `when:` predicate in config (an expression language the engine would have to evaluate, unrunnable on its own, and invisible in the ledger when it doesn't match) |
 | Trial execution | `run_trial` as a campaign-agnostic boundary; `run-one` CLI; campaign loop is a thin shell | Trial logic entangled with the campaign loop (untestable standalone) |
 | Flexible mode | Freeform campaign = one agentic phase + engine-mediated tools (`launch_job`); guarantees identical, metrics `unverified` | Separate fully agentic engine (loses ledger trust, replay, crash recovery — the properties the project exists for) |
 | Phase library | Shared phases/skills beside the engine, on the same public contract as custom ones; grown from real demand | Privileged built-ins (makes custom phases second-class); speculative breadth |
