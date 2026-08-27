@@ -3,7 +3,7 @@
 Corner cases found by running campaigns rather than reading code. **Nothing
 here has been changed**; each entry is written so we can decide together.
 
-Two of these only appeared with a *real* agent driving the engine — the
+Three of these only appeared with a *real* agent driving the engine — the
 scripted stand-ins used in tests do the same trivial thing every time, so
 they could never have surfaced them.
 
@@ -75,7 +75,43 @@ skills work. It just did excellent work in the one place we didn't want any.
 
 ---
 
-## 3. Branching silently degrades when a VCS is configured
+## 3. An analysis phase cannot read what earlier phases produced — functional gap
+
+**What happens.** The `analyze` phase's prompt tells it to read
+`../train/metrics.json` and the campaign index. It cannot. The agent's own
+report opens with the problem:
+
+> *"I could not open `../train/metrics.json` or `../smoke_test/metrics.json`
+> directly (read access outside the workspace/phase dir was denied in this
+> session), nor the campaign index."*
+
+**Why.** The SDK harness grants the agent its workspace (cwd), its *own*
+phase directory, and whatever `read_only` paths the caller passes — and the
+CLI passes only the project directory (cli.py:349). Sibling phase
+directories under `trials/<id>/phases/` and `index/trials.json` are in
+neither list, so the whole point of an analysis phase is unreachable.
+
+**Why it matters.** Analysis is how a trial's result becomes something the
+ideator can use; §10.4 has the ideator reading these reports as the
+campaign's memory. An analysis written without the metrics it is analysing
+is worth much less, and the same gap will hit any phase meant to build on an
+earlier one.
+
+**Likely fix:** include the trial's own directory (so sibling phases are
+readable) and the campaign index in `read_only`. The interesting question is
+whether it should be *read-only* — §7.1 says earlier phases' outputs are
+read-only, and the SDK's `add_dirs` grants read *and* write, so honouring
+that rule may need a permission hook rather than a directory list.
+
+**Note:** the agent handled the limitation exactly as the skill asks — it
+said what it could not read, marked those conclusions unavailable rather
+than guessing, and still produced a correct diagnosis (underfitting, noise
+floor ≈0.12, weight decay premature) from what it had. The failure was
+ours, not its.
+
+---
+
+## 4. Branching silently degrades when a VCS is configured
 
 **What happens.** Trial branching works via directory copy: a child trial's
 workspace inherits its parent's code (verified — a lineage file accumulated
@@ -101,7 +137,7 @@ bug fix, which is why I left it.
 
 ---
 
-## 4. A cheap gate cannot catch a slow-burning bad idea — expected, worth knowing
+## 5. A cheap gate cannot catch a slow-burning bad idea — expected, worth knowing
 
 On the new task, the "knobs only" idea (32 hidden, lr 0.05, 300 epochs)
 *passes* the 5-epoch smoke gate at 1.81, then finishes at **8.81** — far
@@ -114,7 +150,7 @@ nobody expects the gate to be a filter for *quality* rather than for
 
 ---
 
-## 5. No size limit on what a phase can put in the ledger — minor
+## 6. No size limit on what a phase can put in the ledger — minor
 
 A phase can write a 5 MB `notes` string and the engine records it verbatim,
 bloating the log (verified: a single event produced a 5 MB ledger). Agent
