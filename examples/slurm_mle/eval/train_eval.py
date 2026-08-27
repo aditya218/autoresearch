@@ -55,6 +55,8 @@ def main() -> int:
     model_module = load_workspace_model(workspace)
     train_rows, val_rows = data.load()
     model = model_module.build(config, data.N_FEATURES)
+    # Anything fitted on data must see the training split only.
+    model.prepare(train_rows)
 
     started = time.time()
     rng = random.Random(config["seed"])
@@ -67,6 +69,7 @@ def main() -> int:
                 train_rows[i : i + batch_size],
                 lr=config["learning_rate"],
                 momentum=config.get("momentum", 0.0),
+                weight_decay=config.get("weight_decay", 0.0),
             )
         if epoch % 10 == 0 or epoch == int(config["epochs"]) - 1:
             history.append({"epoch": epoch, "val_rmse": round(rmse(model, val_rows), 5)})

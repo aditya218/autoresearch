@@ -7,29 +7,49 @@ scored by a harness the trial cannot modify.
 
 ## The task
 
-Fit a synthetic 2-D regression problem — `sin(2.5·x₁) + 0.5·x₂² − 0.3·x₁·x₂`
-plus noise — with a small MLP written in pure Python (no dependencies). The
-metric is **validation RMSE, minimized**, on a fixed train/val split.
+Fit a synthetic 5-D regression problem with a small MLP written in pure
+Python (no dependencies). The metric is **validation RMSE, minimized**, on a
+fixed train/val split.
 
-There is genuine headroom, which is what makes it a useful demo:
+The task is shaped so that turning knobs plateaus and understanding the data
+pays:
+
+- **Features live on wildly different scales** (one spans hundreds, another
+  spans tenths), so a network fed raw inputs wastes its capacity undoing
+  that. Standardising inputs is worth more than any hyperparameter.
+- **400 training points for a 5-D nonlinear target with an interaction
+  term**, so capacity without regularisation overfits and the train/val gap
+  is informative.
+- **Two of the five features are pure noise**, which an unregularised model
+  will happily fit.
+
+The landscape that produces:
 
 | Configuration | val_rmse |
 |---|---|
-| Baseline (`hidden_size: 8`, `lr: 0.02`, no momentum, 60 epochs) | 0.201 |
-| Momentum 0.9 + 200 epochs | 0.090 |
-| Wider network, tuned lr | 0.104 |
+| Baseline (raw inputs, 8 hidden, lr 0.02, 60 epochs) | 1.373 |
+| Knobs only: 24 hidden + momentum 0.9 + 200 epochs | 1.415 — *no better* |
+| Knobs pushed harder: 32 hidden, lr 0.05, 300 epochs | 8.812 — *much worse* |
+| **Standardised inputs**, baseline knobs otherwise | 0.620 |
+| Standardised + 24 hidden + momentum, 250 epochs | **0.228** |
 | Learning rate 0.9 | diverges |
 
-That last row matters: a diverging run is reported as a **failed idea**, not
-an infrastructure error, so it counts against the trial budget the way a real
+Two rows matter especially. **Knob-turning does not help** — an agent that
+only edits `config.json` will plateau, and pushing harder actively hurts.
+And a **diverging** run is reported as a *failed idea*, not an
+infrastructure error, so it counts against the budget the way a real
 negative result should.
+
+The baseline underfits (its train RMSE is *worse* than its validation RMSE),
+which is the clue: the model cannot fit even the data it was given.
 
 ## What a trial may and may not touch
 
 ```
 base_code/          # the workspace: a trial edits these freely
-  config.json         hyperparameters
-  model.py            architecture, initialisation, update rule
+  config.json         hyperparameters, incl. weight_decay
+  model.py            architecture, init, update rule, and `prepare`/
+                      `transform` hooks for anything fitted on training data
 
 eval/               # NOT in the workspace: a trial cannot rewrite its own score
   data.py             the fixed dataset and split
@@ -112,10 +132,10 @@ A representative run:
 
 ```
 campaign budget_reached
-  T000: completed  val_rmse=0.20094      <- baseline
-  T003: completed  val_rmse=0.19205
-  T004: completed  val_rmse=0.13671
-  T005: completed  val_rmse=0.08966      <- momentum 0.9, 200 epochs
+  T000: completed  val_rmse=1.37290      <- baseline
+  T001: completed  val_rmse=1.41489      <- knobs alone: no better
+  T004: completed  val_rmse=0.62035      <- standardised the inputs
+  T006: completed  val_rmse=0.22841      <- and then added capacity
 ```
 
 ## Exercising the failure paths

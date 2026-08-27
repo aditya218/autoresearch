@@ -9,9 +9,17 @@ teach you something whether they win or lose.
 Only two files exist in the workspace, and both are fair game:
 
 - `config.json` — `hidden_size`, `activation` (`tanh` / `relu` / `sigmoid`),
-  `learning_rate`, `momentum`, `epochs`, `batch_size`, `weight_scale`, `seed`
+  `learning_rate`, `momentum`, `weight_decay`, `epochs`, `batch_size`,
+  `weight_scale`, `seed`
 - `model.py` — the architecture itself: layer count and widths, the
-  initialisation, the update rule, regularisation, learning-rate schedules
+  initialisation, the update rule, learning-rate schedules, and the
+  `prepare(train_rows)` / `transform(x)` hooks, which are where anything
+  fitted on the training data belongs
+
+**Read the data before proposing.** `eval/data.py` describes the task, and
+what it says about the inputs matters more than any hyperparameter. Ideas
+that only edit `config.json` tend to plateau on this task; the ones that
+pay attention to what the model is being fed do not.
 
 The dataset and the scoring are fixed and out of bounds. An idea that
 proposes changing them is invalid.

@@ -59,26 +59,85 @@ def test_baseline_trains_and_scores(tmp_path, example):
     )
     assert proc.returncode == 0, proc.stderr
     metrics = json.loads((out / "metrics.json").read_text())
-    assert 0.0 < metrics["val_rmse"] < 1.0
     assert metrics["diverged"] is False
+    # The baseline is deliberately poor: it feeds raw, wildly-scaled inputs
+    # to a small network, so it underfits rather than overfits.
+    assert 0.5 < metrics["val_rmse"] < 3.0
+    assert metrics["train_rmse"] > metrics["val_rmse"] * 0.8
 
 
-def test_better_hyperparameters_actually_win(tmp_path, example):
-    """There is real headroom - otherwise the example teaches nothing."""
-    results = {}
-    for label, overrides in {
-        "baseline": {},
-        "tuned": {"momentum": 0.9, "epochs": 200},
-    }.items():
-        ws = workspace_with(tmp_path / label, example, **overrides)
-        out = tmp_path / f"out-{label}"
-        subprocess.run(
-            [sys.executable, str(example / "eval" / "train_eval.py"),
-             "--workspace", str(ws), "--out", str(out)],
-            capture_output=True, text=True, check=True,
-        )
-        results[label] = json.loads((out / "metrics.json").read_text())["val_rmse"]
-    assert results["tuned"] < results["baseline"]
+def standardising_model(example: Path) -> str:
+    """The key insight, as a patch to the baseline model: fit per-feature
+    statistics on the training split and apply them to every input."""
+    src = (example / "base_code" / "model.py").read_text()
+    src = src.replace(
+        "    def prepare(self, train_rows):",
+        "    def prepare(self, train_rows):\n"
+        "        import sys as _s, pathlib as _p\n"
+        "        _s.path.insert(0, str(_p.Path(__file__).resolve().parent.parent / 'eval'))\n"
+        "        import data as _d\n"
+        "        self.means, self.stds = _d.feature_stats(train_rows)\n"
+        "        return\n"
+        "    def _unused_prepare(self, train_rows):",
+        1,
+    )
+    src = src.replace(
+        "    def transform(self, x):",
+        "    def transform(self, x):\n"
+        "        if hasattr(self, 'means'):\n"
+        "            return tuple((v - m) / s for v, m, s in zip(x, self.means, self.stds))\n"
+        "        return x\n"
+        "    def _unused_transform(self, x):",
+        1,
+    )
+    return src
+
+
+def score(example: Path, workspace: Path, out: Path) -> float:
+    subprocess.run(
+        [sys.executable, str(example / "eval" / "train_eval.py"),
+         "--workspace", str(workspace), "--out", str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    return json.loads((out / "metrics.json").read_text())["val_rmse"]
+
+
+def test_insight_beats_knob_turning(tmp_path, example):
+    """The task's whole point: the features live on wildly different scales,
+    so standardising inputs is worth more than any hyperparameter. If tuning
+    alone could win, the example would teach the wrong lesson."""
+    baseline = score(example, workspace_with(tmp_path / "base", example), tmp_path / "o-base")
+
+    knobs = score(
+        example,
+        workspace_with(tmp_path / "knobs", example, hidden_size=24, momentum=0.9, epochs=200),
+        tmp_path / "o-knobs",
+    )
+
+    ws = workspace_with(tmp_path / "insight", example)
+    (ws / "model.py").write_text(standardising_model(example))
+    insight = score(example, ws, tmp_path / "o-insight")
+
+    assert knobs > baseline * 0.9, "knob-turning should not meaningfully help here"
+    assert insight < baseline * 0.6, "standardising inputs should be a large win"
+
+
+def test_overfitting_is_visible_at_high_capacity(tmp_path, example):
+    """A large network on 400 points, with the inputs fixed, should fit the
+    training split far better than the validation one - the signal an
+    analysis phase is meant to read."""
+    ws = workspace_with(
+        tmp_path / "big", example, hidden_size=48, momentum=0.9, epochs=250,
+        learning_rate=0.03,
+    )
+    (ws / "model.py").write_text(standardising_model(example))
+    subprocess.run(
+        [sys.executable, str(example / "eval" / "train_eval.py"),
+         "--workspace", str(ws), "--out", str(tmp_path / "o-big")],
+        capture_output=True, text=True, check=True,
+    )
+    m = json.loads((tmp_path / "o-big" / "metrics.json").read_text())
+    assert m["val_rmse"] > m["train_rmse"], "expected a train/val gap to read"
 
 
 # -- the Slurm contract ------------------------------------------------------
@@ -108,7 +167,7 @@ def test_launch_poll_collect_cycle(tmp_path, example):
     assert collected.returncode == 0, collected.stderr
     result = json.loads((out / "result.json").read_text())
     assert result["status"] == "passed"
-    assert 0.0 < result["metrics"]["val_rmse"] < 1.0
+    assert 0.0 < result["metrics"]["val_rmse"] < 3.0
 
 
 def test_find_recovers_a_job_by_tag(tmp_path, example):
