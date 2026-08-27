@@ -58,7 +58,7 @@ state the engine has no rule for gets diagnosed rather than abandoned.
 ```bash
 autoresearch validate examples/slurm_mle/campaign.yaml
 autoresearch run examples/slurm_mle/campaign.yaml \
-    --campaign-dir ~/campaigns/mle --harness 'claude -p' --ideate
+    --campaign-dir ~/campaigns/mle --harness sdk --ideate
 ```
 
 Set `SLURM_PARTITION`, or edit `params` under the `train` phase, to match
@@ -78,8 +78,35 @@ autoresearch run examples/slurm_mle/campaign.yaml \
 ```
 
 `fake_agent` is a scripted stand-in that applies a fixed hyperparameter
-search, so the example runs deterministically without an LLM. Swap in
-`--harness 'claude -p'` for a real agent; the contract is identical.
+search, so the example runs deterministically without an LLM.
+
+**With a real agent**, use the in-process Claude Agent SDK harness:
+
+```bash
+autoresearch run examples/slurm_mle/campaign.yaml \
+    --campaign-dir /tmp/mle-campaign --harness sdk --ideate \
+    --effort high --max-turns 40 --max-budget-usd 5
+```
+
+or any harness CLI (`--harness 'claude -p'`). Every invocation is bounded in
+turns, spend, and wall-clock, and the agent can reach only the trial's
+workspace, its own phase directory, and the read-only project directory.
+
+## Skills
+
+`skills/` is where this project teaches agents what it knows. The engine
+resolves them itself and inlines them into the prompt, so the same text
+reaches the SDK, a CLI, or a scripted stand-in unchanged:
+
+| Skill | Used by | Teaches |
+|---|---|---|
+| `propose-mle-idea` | ideation | what is changeable, one hypothesis at a time, that lr ≥ 0.5 diverges here |
+| `implement-mle-idea` | `implement` | the entry points the eval harness calls, and to change only what the idea asks |
+| `analyze-mle-results` | `analyze` | read the training curve, compare against parent and baseline, don't call noise a win |
+| `repair-slurm-job` | repair | the real Slurm failure shapes, and when to escalate rather than guess |
+
+These are worth reading even if you use a different cluster — they are the
+concrete form of "projects supply capability, the engine supplies contracts."
 
 A representative run:
 

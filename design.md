@@ -9,13 +9,19 @@ views, the phase contract, the job-script contract with a toy project for CI,
 agent-harness adapter (agentic phases, agent-backed ideation, engine-mediated
 `launch_job`), remote-FS mirroring with immediate push on job launch and
 restore-from-mirror, the VCS adapters (Mercurial primary, git and plain-copy
-secondaries), and the repair agent. CLI: `validate`, `run-phase`, `run-one`,
+secondaries), the repair agent, project skill resolution, and a Claude
+Agent SDK harness. CLI: `validate`, `run-phase`, `run-one`,
 `run`, `status`. 148 tests.
 
+*Worked example:* `examples/slurm_mle/` is a complete campaign - a small
+regression task whose training run is submitted with `sbatch`, polled with
+`sacct`, and scored by a harness the trial cannot reach, with the four skills
+it names.
+
 *Not yet exercised against reality:* the hg adapter is tested against a fake
-`hg` that pins the command surface, not a live repository, and no real
-research project has run on the engine yet. Both wait on a first concrete
-campaign.
+`hg` that pins the command surface, not a live repository; the Slurm scripts
+are real but have only run against local shims; and no real research project
+has run on the engine yet.
 
 ## 1. Why this exists, and what it is
 

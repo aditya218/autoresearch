@@ -42,9 +42,10 @@ def compose_prompt(
     phase_dir: Path,
     idea: dict | None = None,
     prior: dict[str, dict] | None = None,
+    skill_text: str = "",
 ) -> str:
-    """Build the phase prompt: campaign goal, the idea, what earlier phases
-    found, where to work, and the output contract."""
+    """Build the phase prompt: campaign goal, the project's skills, the idea,
+    what earlier phases found, where to work, and the output contract."""
     lines = [
         f"# Campaign: {config.name}",
         f"Goal: {config.goal}",
@@ -53,7 +54,9 @@ def compose_prompt(
     ]
     if cfg.prompt:
         lines += ["", cfg.prompt]
-    if cfg.skills:
+    if skill_text:
+        lines += ["", skill_text]
+    elif cfg.skills:
         lines += ["", "Use these skills: " + ", ".join(cfg.skills)]
     if idea:
         lines += ["", "# The idea to evaluate", json.dumps(idea, indent=2)]
@@ -101,16 +104,30 @@ def make_agentic_runner(
     idea: dict | None = None,
     tools: dict | None = None,
     read_only: list[Path] | None = None,
+    project_dir: Path | None = None,
 ):
-    """Build the `run_agentic` callable `run_trial` expects."""
+    """Build the `run_agentic` callable `run_trial` expects.
+
+    When `project_dir` is given, the phase's skills are resolved from it and
+    inlined into the prompt, so they reach any harness identically.
+    """
 
     def run(
         phase: str, cfg: PhaseConfig, workspace: Path, phase_dir: Path
     ) -> PhaseOutcome:
         trial = state.trials[trial_id]
+        skill_text = ""
+        if project_dir is not None and cfg.skills:
+            from autoresearch.skills import SkillNotFound, as_prompt_section, resolve
+
+            try:
+                skill_text = as_prompt_section(resolve(project_dir, cfg.skills))
+            except SkillNotFound as exc:
+                raise PhaseFailure(f"{phase}: {exc}") from exc
+
         prompt = compose_prompt(
             config, phase, cfg, trial_id, workspace, phase_dir,
-            idea=idea, prior=prior_summaries(trial),
+            idea=idea, prior=prior_summaries(trial), skill_text=skill_text,
         )
         request = AgentRequest(
             prompt=prompt,

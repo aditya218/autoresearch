@@ -220,13 +220,37 @@ def cmd_run_one(args: argparse.Namespace) -> int:
 
 def _harness_from_args(args: argparse.Namespace):
     """Build the agent harness named on the command line, or None to use the
-    scripted stand-in. Any harness CLI works: `--harness 'claude -p'`."""
-    if not getattr(args, "harness", None):
+    scripted stand-in.
+
+    `--harness sdk` runs agentic phases in-process through the Claude Agent
+    SDK; anything else is treated as a harness CLI (`--harness 'claude -p'`),
+    which is how any other vendor's harness plugs in.
+    """
+    name = getattr(args, "harness", None)
+    if not name:
         return None
+
+    if name == "sdk":
+        from autoresearch.sdk_harness import ClaudeSDKHarness, available
+
+        if not available():
+            print(
+                "error: --harness sdk needs claude-agent-sdk installed "
+                "(pip install claude-agent-sdk)",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        return ClaudeSDKHarness(
+            model=getattr(args, "model", None),
+            effort=getattr(args, "effort", None) or "high",
+            max_turns=getattr(args, "max_turns", None),
+            max_budget_usd=getattr(args, "max_budget_usd", None),
+        )
+
     from autoresearch.agents import CommandHarness
 
     return CommandHarness(
-        command=args.harness.split(), skill_arg=getattr(args, "skill_arg", None)
+        command=name.split(), skill_arg=getattr(args, "skill_arg", None)
     )
 
 
@@ -291,11 +315,16 @@ def cmd_run(args: argparse.Namespace) -> int:
                     json.loads(idea_file.read_text()) if idea_file.exists() else None
                 )
                 runner = make_agentic_runner(
-                    harness, campaign.config, campaign.state, trial_id, idea=idea
+                    harness, campaign.config, campaign.state, trial_id, idea=idea,
+                    project_dir=campaign.project.dir,
+                    read_only=[campaign.project.dir],
                 )
                 return runner(phase, cfg, workspace, phase_dir)
 
-            ideator = AgentIdeator(harness) if args.ideate else None
+            ideator = (
+                AgentIdeator(harness, project_dir=campaign.project.dir)
+                if args.ideate else None
+            )
 
         repair_agent = None
         if harness is not None and not args.no_repair:
@@ -410,6 +439,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_camp.add_argument(
         "--skill-arg", default=None, help="flag the harness takes per skill"
+    )
+    p_camp.add_argument("--model", default=None, help="model for the sdk harness")
+    p_camp.add_argument(
+        "--effort", default=None, choices=["low", "medium", "high", "xhigh", "max"]
+    )
+    p_camp.add_argument(
+        "--max-turns", type=int, default=40, help="per agentic phase (sdk harness)"
+    )
+    p_camp.add_argument(
+        "--max-budget-usd", type=float, default=5.0,
+        help="spend cap per agentic phase (sdk harness)",
     )
     p_camp.add_argument(
         "--ideate", action="store_true", help="let the harness generate ideas"

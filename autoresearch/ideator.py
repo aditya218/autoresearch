@@ -91,9 +91,15 @@ def research_digest(campaign, max_trials: int = 40) -> str:
 class AgentIdeator:
     """An ideator backed by an agent harness."""
 
-    def __init__(self, harness: AgentHarness, work_dir: Path | None = None):
+    def __init__(
+        self,
+        harness: AgentHarness,
+        work_dir: Path | None = None,
+        project_dir: Path | None = None,
+    ):
         self.harness = harness
         self.work_dir = work_dir
+        self.project_dir = project_dir
         self.dropped: list[str] = []
 
     def __call__(self, campaign, wanted: int) -> list[dict]:
@@ -122,6 +128,16 @@ class AgentIdeator:
         )
         if cfg.ideation.prompt:
             prompt += "\n" + cfg.ideation.prompt
+
+        # Inline the project's ideation skills, the same way phases get theirs.
+        if cfg.ideation.skills and self.project_dir is not None:
+            from autoresearch.skills import SkillNotFound, as_prompt_section, resolve
+
+            try:
+                skills = resolve(self.project_dir, cfg.ideation.skills)
+            except SkillNotFound as exc:
+                raise HarnessError(str(exc)) from exc
+            prompt = as_prompt_section(skills) + "\n\n" + prompt
 
         result = self.harness.invoke(
             AgentRequest(
