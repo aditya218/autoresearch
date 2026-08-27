@@ -373,6 +373,65 @@ adapter as primary, with the client binary and workspace creation as
 parameters so an hg-compatible client needs no new adapter; git is a trivial
 secondary.
 
+### 6.5 Alternative considered: a reconciling engine
+
+The engine walks each trial imperatively: `run_trial` holds the current
+phase in a local variable and advances it as phases finish. The alternative
+- considered, and still open - is a **reconciler**: derive what should be
+running from the ledger, act, and repeat.
+
+```
+while True:
+    state   = replay(ledger)                  # or keep it incrementally
+    actions = reconcile(state, config)        # pure: what should run now?
+    for action in actions:
+        dispatch(action)                      # each records its own events
+    await something_changed()
+```
+
+The case for it is that it is more coherent with this design's own premise.
+Everything here is meant to derive from the ledger - and yet a trial's
+position in its workflow lives in a Python local variable, the one piece of
+state the log cannot see. Three consequences follow from that, all of which
+a reconciler would not have:
+
+- **Resume is a special path.** `run_trial` re-walks and skips phases the
+  log says passed, imitating recovery. For a reconciler, restarting *is*
+  reconciling; there is no second code path to keep correct.
+- **Parallel phases don't fit.** A cursor can only express a chain (§5). A
+  reconciler computes a ready set, so fan-out and fan-in are free.
+- **The same reasoning is written twice.** Admission lives in the campaign
+  loop, phase progression in the trial walk. Both answer "given what has
+  happened, what should happen next" - a reconciler answers it once.
+
+What it would cost:
+
+- **Debuggability inverts.** "Why didn't `analyze` start?" is currently
+  answered by reading twenty lines in order. Against a rule set it means
+  reasoning about evaluation, and rules interact.
+- **Rule-language creep.** If the rules become configuration rather than
+  code, they grow conditions, guards, and priorities - a language to design,
+  validate, and document, competing with the phase config that already
+  exists.
+- **Convergence testing.** "Call this function and assert" becomes "seed
+  events, run until quiescent, assert" - and *did it settle?* is a real
+  question rather than an obvious one.
+
+Note what it would **not** cost: a single reconciler process keeps the
+single-writer invariant exactly as it is. Reactive does not imply
+distributed; leader election and cross-writer exactly-once only arrive if
+reconciliation is spread across machines, which is a separate decision
+(§12).
+
+**Where this leaves things.** The two designs differ less than they appear,
+and one step closes most of the gap: extract `reconcile(state) → actions` as
+a pure function, leaving `run_trial` as a thin driver that executes what it
+returns. That makes position derived rather than held, gives the ready set
+the DAG needs, and is testable with no agents, jobs, or async involved.
+Whether the rules then live in code or in configuration is a later, smaller
+choice - and the DSL is the part that genuinely bites, so code until a real
+need appears.
+
 ## 7. Phases in detail
 
 *Overview: §5 introduced what phases are; this section defines how they talk
@@ -641,6 +700,7 @@ create a job the ledger doesn't know about.
 | Agent substrate | Off-the-shelf agent harness behind a thin adapter; pluggable, self-hosted | Hosted managed-agent services (remote sandbox fights local scripts/workspaces); hand-built agent loop (rebuild file tools + skills) |
 | Language | Python | TypeScript |
 | Orchestration | Deterministic engine; agents invoked at defined points, returning validated verdicts | Agent-as-orchestrator (unreplayable, expensive, compounding per-decision error) |
+| Trial progression | Imperative walk: `run_trial` advances a cursor as phases finish | A reconciling engine deriving what to run from the ledger (§6.5) — more coherent with the design's own premise, and still open; the imperative walk was chosen for legibility and speed to a working system |
 | Ledger | JSONL event log + materialized views; no DB in v0 | SQLite primary (not agent-readable, risky on network FS); files-only without event sourcing (hand-rolled transactionality) |
 | Durability | Local working tier, remote FS mirror via periodic incremental sync + immediate push for job launches | Working directly on remote FS (slow; SQLite locking unsafe there) |
 | VCS | Mercurial-first: nameless node-hash interface, acquire/release workspaces; hg adapter primary, client binary parameterized | git-first design (branch-name semantics don't map to hg); git remains a trivial secondary adapter |
