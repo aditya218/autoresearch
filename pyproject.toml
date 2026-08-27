@@ -1,0 +1,31 @@
+[project]
+name = "autoresearch"
+version = "0.1.0"
+description = "Autonomous research engine for ML experimentation"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+autoresearch = "autoresearch.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["autoresearch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Import the package from the repo directly. On macOS, uv marks a fresh .venv
+# with the hidden file flag and Python 3.14 skips hidden .pth files, which
+# silently breaks editable installs; this keeps the test run independent of it.
+pythonpath = ["."]

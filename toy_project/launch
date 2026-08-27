@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Toy launch: creates a fake job that "runs" for a few polls.
+
+Job state lives in a jobs/ directory beside this script, so poll and collect
+can find it - standing in for a real remote job system.
+"""
+
+import argparse
+import json
+import os
+import sys
+import uuid
+from pathlib import Path
+
+JOBS = Path(__file__).parent / "jobs"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--tag", required=True)
+    ap.add_argument("--workspace", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--polls", default="2")
+    ap.add_argument("--outcome", default="done")
+    ap.add_argument("--scale", default="1.0")
+    ap.add_argument("--launch-mode", default="ok")
+    args = ap.parse_args()
+
+    if args.launch_mode == "die":
+        print("toy launcher exploded", file=sys.stderr)
+        return 1
+
+    JOBS.mkdir(parents=True, exist_ok=True)
+    job_id = f"toy-{uuid.uuid4().hex[:8]}"
+    change_file = Path(args.workspace) / "change.json"
+    change = json.loads(change_file.read_text()) if change_file.exists() else {}
+    (JOBS / f"{job_id}.json").write_text(
+        json.dumps(
+            {
+                "job_id": job_id,
+                "phase": args.phase,
+                "tag": args.tag,
+                "polls_left": int(args.polls),
+                "outcome": args.outcome,
+                "scale": float(args.scale),
+                "change": change,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    if args.launch_mode == "ambiguous":
+        # Job exists, but the launcher fails before reporting its id: exactly
+        # the case `find` exists to resolve.
+        print("lost the job id", file=sys.stderr)
+        return 1
+
+    print(job_id)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

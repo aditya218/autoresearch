@@ -1,0 +1,43 @@
+# Toy campaign: the engine's own end-to-end fixture. Everything here runs
+# locally in seconds, with fake "remote" jobs, so CI can exercise whole
+# campaigns (§10.3).
+name: toy
+goal: Maximize the toy score by adjusting the toy delta.
+project_dir: .
+
+key_metrics:
+  score:
+    from: train
+    goal: maximize
+
+ideation:
+  backlog_target: 2
+  skills: [toy-ideate]
+
+budget:
+  max_trials: 5
+  active_trials: 2
+
+workflow:
+  implement:
+    agentic: true
+    skills: [toy-implement]
+    produces: [change.json]
+
+  smoke_test:
+    after: implement
+    gate: true
+    uses: local
+    params: {scale: 0.1}
+
+  train:
+    after: smoke_test
+    uses: job
+    params: {polls: 2, scale: 1.0}
+    produces: [job_log.txt]
+    repair: {skill: toy-repair, max_attempts: 2}
+
+  analyze:
+    after: train
+    agentic: true
+    skills: [toy-analyze]

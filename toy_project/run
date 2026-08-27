@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Toy deterministic phase: runs locally, writes result.json.
+
+Reads the trial's `change.json` from the workspace (written by the toy
+implement step) and derives a score from it, so different ideas produce
+different numbers. Params can force a failure, for testing gates.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--workspace", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--fail", default="no")
+    ap.add_argument("--scale", default="1.0")
+    ap.add_argument("--crash", default="no")
+    args = ap.parse_args()
+
+    # YAML turns `fail: yes` into True, which reaches us as "True": accept any
+    # spelling rather than silently ignoring the flag.
+    def truthy(value: str) -> bool:
+        return value.strip().lower() in {"yes", "true", "1", "on"}
+
+    if truthy(args.crash):
+        print("toy crash", file=sys.stderr)
+        return 3
+
+    workspace = Path(args.workspace)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    change = {}
+    change_file = workspace / "change.json"
+    if change_file.exists():
+        change = json.loads(change_file.read_text())
+
+    base = float(change.get("delta", 0.0))
+    score = round(0.50 + base * float(args.scale), 4)
+
+    (out / "raw_output.txt").write_text(f"toy phase {args.phase} ran; score={score}\n")
+    result = {
+        "status": "failed" if truthy(args.fail) else "passed",
+        "metrics": {"score": score},
+        "notes": f"toy {args.phase} on {change.get('name', 'baseline')}",
+        "artifacts": ["raw_output.txt"],
+    }
+    (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
