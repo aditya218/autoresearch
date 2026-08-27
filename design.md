@@ -1,28 +1,12 @@
 # Autoresearch v2 — Design
 
-**Status:** Agreed design; v0 built end to end. 2026-08-26.
+**Status:** Agreed design; v0 built end to end, with a worked example. 2026-08-27.
 
-*Built* (workflows are DAGs by design; the walk implements the linear
-case so far): the event ledger with crash recovery, replayed state and materialized
-views, the phase contract, the job-script contract with a toy project for CI,
-`run_trial` (DAG walk, gates, retries, provenance, resume), the campaign loop
-(baseline, admission, budgets, drain, human controls), the pluggable
-agent-harness adapter (agentic phases, agent-backed ideation, engine-mediated
-`launch_job`), remote-FS mirroring with immediate push on job launch and
-restore-from-mirror, the VCS adapters (Mercurial primary, git and plain-copy
-secondaries), the repair agent, project skill resolution, and a Claude
-Agent SDK harness. CLI: `validate`, `run-phase`, `run-one`,
-`run`, `status`. 189 tests.
+Sections 1–5 are what you need to run campaigns and define your own phases.
+Section 6 onward is how the engine delivers that — the part expected to
+change as we learn.
 
-*Worked example:* `examples/slurm_mle/` is a complete campaign - a small
-regression task whose training run is submitted with `sbatch`, polled with
-`sacct`, and scored by a harness the trial cannot reach, with the four skills
-it names.
-
-*Not yet exercised against reality:* the hg adapter is tested against a fake
-`hg` that pins the command surface, not a live repository; the Slurm scripts
-are real but have only run against local shims; and no real research project
-has run on the engine yet.
+What is built and what is not: see the repository README.
 
 ## 1. Why this exists, and what it is
 
@@ -75,12 +59,12 @@ auditability** — on a single orchestrator machine.
   up; a **trial runner** pushes each idea through the workflow (§4, §8).
 - The **workflow** is a configurable DAG of phases — agentic (driven by
   skills) or deterministic (scripts and remote jobs), with gates — from one
-  freeform phase to a fully structured pipeline (§5, §7).
+  freeform phase to a fully structured pipeline (§5).
 - A **deterministic engine** owns all state: an append-only event ledger plus
   readable views, mirrored to a remote filesystem; a crash means replay and
   resume, never loss (§6).
 - **Anything with consequences is validated** — phase results, metric
-  provenance, file contracts; prose is inert (§7).
+  provenance, file contracts; prose is inert (§5).
 - **Budgets, baselines, a failure taxonomy, and an agentic repair loop** keep
   multi-day campaigns honest and unattended (§8, §9).
 
@@ -113,7 +97,12 @@ auditability** — on a single orchestrator machine.
 | **Idea / Backlog** | An ideation output waiting to become a trial. The backlog is kept near a configured target size by the ideator loop. |
 | **Trial** | One idea run through the workflow — the unit of experimentation. A trial may branch off an existing trial's code state, forming a tree of ideas. |
 | **Workflow** | The inner loop: an ordered set of phases that evaluate one idea. Fully configurable per campaign. |
-| **Phase** | A logical unit of work: implement the idea, launch an eval job, analyze results. Each declares when it runs, whether it is agentic (skills) or deterministic (job/script), the key metrics it produces, and whether it is a **gate** — failure stops the trial. |
+| **Phase** | A logical unit of work: implement the idea, launch an eval job, analyze results. Each declares when it runs, whether it is agentic (driven by skills) or deterministic (a script or a remote job), the key metrics it produces, and whether it is a **gate** — a phase whose failure stops the trial rather than failing it. Defining one: §5.2. |
+| **Skill** | Markdown a project writes to teach agents what it knows — how to propose ideas for this task, how to implement them in this codebase, how its infrastructure fails. Named per phase, resolved by the engine, and inlined into the agent's prompt, so the same text reaches any harness. |
+| **Workspace** | The directory a trial's code lives in while it runs. Acquired from the parent trial's code state, so trials form a tree; an agent edits freely here, and nowhere else. |
+| **Baseline (T000)** | The first trial: the workflow run on unmodified code. Both a smoke test — a campaign halts if it fails — and the reference every later trial's metrics are compared against. |
+| **Repair** | An agent consulted when a job hits a situation the engine has no rule for. It investigates and *recommends*; the engine performs the action, so a repair can never create a job the ledger doesn't know about. |
+| **Harness** | Whatever runs an agent — an SDK or a CLI — behind a thin adapter. A per-deployment choice the rest of the design does not depend on. |
 | **Ledger** | The durable record of all research: an append-only event log (truth + audit trail) plus materialized views (the readable current state of every trial). |
 | **Job** | Long-running remote work launched via a project-supplied script, tracked by job_id, surviving engine restarts. |
 
@@ -152,7 +141,7 @@ the budget and restart to continue. A crash at any point is the same story:
 restart, replay the log, regenerate anything stale, reattach to running jobs,
 carry on.
 
-## 5. Workflows: configuring the experiment
+## 5. Workflows and phases: configuring the experiment
 
 The workflow is where a campaign takes its shape, and it is entirely yours to
 configure. A workflow is a DAG of phases — here, one that tries each idea at
@@ -203,7 +192,7 @@ nothing to audit.
 
 The limit worth knowing: a gate *stops* a trial, it does not branch. "Run
 the big eval if promising, a cheap fallback otherwise" needs conditional
-edges, which belong with parallel phases (§12) rather than with gates.
+edges, which belong with parallel phases (§11) rather than with gates.
 - `uses:` references either a **shared phase** from the engine's
   centrally-tested library (launching common job types, running local evals) or
   a **custom phase** the project defines — both built on the same contract.
@@ -212,12 +201,12 @@ edges, which belong with parallel phases (§12) rather than with gates.
   the linear case only*: `after:` takes a single predecessor, and config
   validation rejects a fan-out rather than silently running one branch. The
   ledger already supports the general case, so lifting this is a change to
-  `run_trial`'s walk, not to the design (§12).
+  `run_trial`'s walk, not to the design (§11).
 - Phases declare the metrics they produce; **key metrics** are bound to
   deterministic phases so they can be trusted.
 
-How phases exchange data, the exact output contract, and the shared-phase
-library are detailed in §7.
+How to define a phase, what it must return, and the shared-phase library
+follow in §5.2–5.4.
 
 ### 5.1 Three ways to run it
 
@@ -257,11 +246,156 @@ in the workflow. The migration path is incremental: start with one agentic
 phase, and promote the steps you notice recurring into real phases one at a
 time, adding gates and deterministic evals where reliability matters most.
 
+### 5.2 Defining a phase
+
+A phase is the unit you write. There are four kinds, and `uses:` selects
+between them:
+
+| `uses:` | What runs | When to reach for it |
+|---|---|---|
+| *(omitted, with `agentic: true`)* | an agent in the trial's workspace, guided by skills | work that needs judgement: implementing an idea, analysing results |
+| `local` | the project's `run` script | a deterministic step that finishes in place — a smoke test, a build |
+| `job` | the project's `launch` / `poll` / `collect` scripts | long-running work on someone else's scheduler |
+| `slurm_job`, … | a shared implementation shipped with the engine | the common job systems, so you don't rewrite them |
+| `./phases/my_thing` | your own directory of the same scripts | anything the library doesn't cover |
+
+An unresolvable `uses:` is an error at `validate` time, not a silent
+fallback.
+
+**A job phase's scripts.** Three required, two optional. The engine knows
+nothing else about your scheduler:
+
+| Script | Must do |
+|---|---|
+| `launch <phase> --tag T --workspace W --out O` | submit the work; print **only** the job id. Attach `--tag` to the job so `find` can recover it |
+| `poll <phase> --job-id J` | print `pending`, `running`, `done`, or `failed`. Anything else is treated as a situation for repair |
+| `collect <phase> --job-id J --out O` | turn the finished job into `result.json` |
+| `find <phase> --tag T` *(optional)* | print job ids matching a tag, so a launch that lost its id is recoverable |
+| `cancel <phase> --job-id J` *(optional)* | stop a job. Without it, a killed trial or an abandoned phase leaves the job running |
+
+A local phase instead provides `run <phase> --workspace W --out O`.
+
+**What every phase must return** is one file, whatever kind it is — see
+§5.3.
+
+**The full vocabulary.** Everything a phase may declare:
+
+| Field | Default | Means |
+|---|---|---|
+| `after` | *(root)* | the phase this one runs after. Exactly one predecessor (§5) |
+| `gate` | `false` | a `failed` result ends the trial as `gate_stopped` instead of failing it |
+| `agentic` | `false` | run an agent rather than a script |
+| `skills` | `[]` | which of the project's skills the agent gets (agentic only) |
+| `prompt` | — | extra instructions appended to the engine's phase prompt |
+| `uses` | — | which implementation runs (table above). Mutually exclusive with `agentic` |
+| `params` | `{}` | passed to the scripts as `--key value` |
+| `produces` | `[]` | files that must exist when this phase completes, or the phase fails |
+| `max_retries` | `2` | attempts after an infra error, before the trial ends `errored` |
+| `timeout_s` | — | ceiling on each *script invocation* — not on the job's own runtime, which belongs to your scheduler |
+| `stuck_after_polls` | `0` *(off)* | unchanged polls before repair is consulted |
+| `pending_after_polls` | `0` *(falls back to `stuck_after_polls`)* | polls spent **queued** before repair is consulted. A job that never starts is a different problem from one that runs a long time |
+| `repair` | — | `{skill, max_attempts}` — who to ask when a job hits a situation with no rule (§8.1) |
+
+### 5.3 What a phase returns
+
+A phase communicates with the engine through exactly one file: `result.json`
+in its phase directory, schema-validated:
+
+```
+{status: "passed" | "failed", metrics: {name: value}, notes: str, artifacts: [paths]}
+```
+
+Agentic phases are instructed to write it (a malformed one is a retryable
+error); for job phases the collect script produces it. The engine does all
+ledger work — phases never touch the ledger. Transitions stay dumb: a phase
+becomes ready when its predecessor passes; a gate's `failed` ends the trial as
+`gate_stopped`.
+
+**One rule governs phase outputs: anything with consequences is validated;
+anything that is prose has no consequences.**
+
+- **Decisions read validated fields, never text.** Advancing the trial, gates,
+  and recorded metrics all come from `result.json`. The engine never
+  interprets a sentence like "it looks good, roughly 0.91" to decide anything.
+- **Files a later phase needs must verifiably exist first.** A phase declares
+  what it `produces:`; the engine checks when the phase *completes*, and a
+  missing file fails the producer. A later phase never starts with an expected
+  input missing — no room for an agent to "helpfully" fabricate one. Phases
+  write only their own directory; earlier phases' outputs are read-only.
+- **Free text is welcome, but inert.** `notes` and analysis reports are
+  context for later agents and the ideator. A wrong sentence there can't flip
+  a gate, record a metric, or conjure a file.
+
+### 5.4 Shared vs custom phases
+
+The engine ships a **standard library of phases** for common actions — e.g.
+deterministic phases to launch Slurm jobs, run local in-process
+evals, or launch jobs on a serving cluster — centrally tested and reused via
+configuration, with coverage growing over time. Projects add custom phases
+wherever the library doesn't fit. The rule that keeps this healthy: **shared
+phases are not special.** They are built against the same public contract as
+custom ones, and the library lives *beside* the engine, not in it — the engine
+core never learns what Slurm is. In config both look alike (§5's example).
+
+`uses:` resolves to one of four things: `local` and `job` (the project's own
+scripts), a shared phase shipped beside the engine (`slurm_job`), or a path
+to a custom directory (`./phases/my_sim`). Anything else is an error rather
+than a silent fallback, so a typo fails at `validate` instead of running the
+wrong thing. A shared phase is reusable because what it runs is a parameter:
+
+```yaml
+train:
+  uses: slurm_job
+  params:
+    command: "python eval/train.py --workspace {workspace} --out {out}"
+    partition: gpu
+    gpus: 8
+```
+
+If a shared phase needs something the contract doesn't offer, that's a
+contract gap to fix for everyone — not a private hook. Agentic phases
+generalize the same way, with skills as the payload: shared `fix-builds` or
+`analyze-results` skills are centrally-maintained phase definitions any
+project could have written. Each library phase ships with its own `run-phase`
+fixture tests (§9.3), and the `configure-campaign` skill knows the catalog —
+shared phases first, custom scaffolding only when nothing fits. Coverage grows
+from real demand, not speculative breadth.
+
+### 5.5 Metric integrity
+
+Skills raise the floor on agent behavior but cannot guarantee honest numbers —
+gamed or hallucinated metrics are exactly the failure mode prompts can't
+prevent. The engine enforces **provenance**:
+
+- Every metric event records the producing phase and whether it was agentic or
+  deterministic.
+- Campaign config binds each **key metric** (consumed by gates and ideation)
+  to a deterministic phase: `accuracy: {from: eval}`. A key metric from any
+  other phase is rejected. Agentic phases may report numbers; they land as
+  `unverified` and views label them so.
+- **Project launch/eval scripts live outside the trial workspace:** the agent
+  edits training code — its job — but cannot rewrite the eval harness or the
+  launcher that invokes it.
+
+Residual risk stated honestly: an agent can still overfit the eval set through
+legitimate code changes. That is a science problem, mitigated by skills and
+the analysis phase — not an integrity problem the engine can solve.
+
 ## 6. The engine
 
 *Overview: one deterministic process per campaign owns all state and calls
 everything else. This section covers the ledger, durability, remote jobs, and
 version control — the machinery behind "reliable, resumable, auditable."*
+
+**The agent substrate is pluggable.** Agentic phases run on an off-the-shelf
+agent harness — any SDK that provides the agent loop with filesystem tools,
+shell, and a skills/prompt mechanism — behind a thin adapter:
+`invoke(prompt, skills, workspace, tools) → outputs`. The engine is not tied
+to a specific vendor or model; the harness is a per-deployment choice, and
+harnesses can be swapped without touching the engine. (Chosen over hosted
+managed-agent services, whose remote sandboxes fight local workspaces and
+internal launch scripts, and over a hand-built agent loop, which would mean
+rebuilding file tools and skills.)
 
 One orchestrator process (Python) per campaign runs everything: the two loops,
 per-trial workflow state machines (asyncio — 10s to 100s of concurrent
@@ -393,108 +527,7 @@ chosen deliberately. A reconciling design, deriving what should run from the
 ledger instead, is the natural upgrade and stays open; Appendix A weighs it
 and shows why moving later is a contained change.*
 
-## 7. Phases in detail
-
-*Overview: §5 introduced what phases are; this section defines how they talk
-to the engine and to each other, the shared-phase library, and why recorded
-metrics can be trusted.*
-
-**The agent substrate is pluggable.** Agentic phases run on an off-the-shelf
-agent harness — any SDK that provides the agent loop with filesystem tools,
-shell, and a skills/prompt mechanism — behind a thin adapter:
-`invoke(prompt, skills, workspace, tools) → outputs`. The engine is not tied
-to a specific vendor or model; the harness is a per-deployment choice, and
-harnesses can be swapped without touching the engine. (Chosen over hosted
-managed-agent services, whose remote sandboxes fight local workspaces and
-internal launch scripts, and over a hand-built agent loop, which would mean
-rebuilding file tools and skills.)
-
-### 7.1 The phase contract
-
-A phase communicates with the engine through exactly one file: `result.json`
-in its phase directory, schema-validated:
-
-```
-{status: "passed" | "failed", metrics: {name: value}, notes: str, artifacts: [paths]}
-```
-
-Agentic phases are instructed to write it (a malformed one is a retryable
-error); for job phases the collect script produces it. The engine does all
-ledger work — phases never touch the ledger. Transitions stay dumb: a phase
-becomes ready when its predecessor passes; a gate's `failed` ends the trial as
-`gate_stopped`.
-
-**One rule governs phase outputs: anything with consequences is validated;
-anything that is prose has no consequences.**
-
-- **Decisions read validated fields, never text.** Advancing the trial, gates,
-  and recorded metrics all come from `result.json`. The engine never
-  interprets a sentence like "it looks good, roughly 0.91" to decide anything.
-- **Files a later phase needs must verifiably exist first.** A phase declares
-  what it `produces:`; the engine checks when the phase *completes*, and a
-  missing file fails the producer. A later phase never starts with an expected
-  input missing — no room for an agent to "helpfully" fabricate one. Phases
-  write only their own directory; earlier phases' outputs are read-only.
-- **Free text is welcome, but inert.** `notes` and analysis reports are
-  context for later agents and the ideator. A wrong sentence there can't flip
-  a gate, record a metric, or conjure a file.
-
-### 7.2 Shared vs custom phases
-
-The engine ships a **standard library of phases** for common actions — e.g.
-deterministic phases to launch Slurm jobs, run local in-process
-evals, or launch jobs on a serving cluster — centrally tested and reused via
-configuration, with coverage growing over time. Projects add custom phases
-wherever the library doesn't fit. The rule that keeps this healthy: **shared
-phases are not special.** They are built against the same public contract as
-custom ones, and the library lives *beside* the engine, not in it — the engine
-core never learns what Slurm is. In config both look alike (§5's example).
-
-`uses:` resolves to one of four things: `local` and `job` (the project's own
-scripts), a shared phase shipped beside the engine (`slurm_job`), or a path
-to a custom directory (`./phases/my_sim`). Anything else is an error rather
-than a silent fallback, so a typo fails at `validate` instead of running the
-wrong thing. A shared phase is reusable because what it runs is a parameter:
-
-```yaml
-train:
-  uses: slurm_job
-  params:
-    command: "python eval/train.py --workspace {workspace} --out {out}"
-    partition: gpu
-    gpus: 8
-```
-
-If a shared phase needs something the contract doesn't offer, that's a
-contract gap to fix for everyone — not a private hook. Agentic phases
-generalize the same way, with skills as the payload: shared `fix-builds` or
-`analyze-results` skills are centrally-maintained phase definitions any
-project could have written. Each library phase ships with its own `run-phase`
-fixture tests (§10.3), and the `configure-campaign` skill knows the catalog —
-shared phases first, custom scaffolding only when nothing fits. Coverage grows
-from real demand, not speculative breadth.
-
-### 7.3 Metric integrity
-
-Skills raise the floor on agent behavior but cannot guarantee honest numbers —
-gamed or hallucinated metrics are exactly the failure mode prompts can't
-prevent. The engine enforces **provenance**:
-
-- Every metric event records the producing phase and whether it was agentic or
-  deterministic.
-- Campaign config binds each **key metric** (consumed by gates and ideation)
-  to a deterministic phase: `accuracy: {from: eval}`. A key metric from any
-  other phase is rejected. Agentic phases may report numbers; they land as
-  `unverified` and views label them so.
-- **Project launch/eval scripts live outside the trial workspace:** the agent
-  edits training code — its job — but cannot rewrite the eval harness or the
-  launcher that invokes it.
-
-Residual risk stated honestly: an agent can still overfit the eval set through
-legitimate code changes. That is a science problem, mitigated by skills and
-the analysis phase — not an integrity problem the engine can solve.
-
-## 8. Ideas and budgets
+## 7. Ideas and budgets
 
 **Governing rule: every budget and limit is derived from the ledger by replay —
 never from an in-memory counter.** Restart, crash recovery, and deliberate
@@ -516,7 +549,7 @@ engine retries. It never crashes a campaign; but "never stalls" has a limit
 worth stating: with nothing running, an empty backlog, and ideation failing
 repeatedly, the loop stops for a human rather than spinning forever. Keep `backlog_target`
 small (2–5) so ideas stay fresh. And ideation is **a dial, not a
-prerequisite**: with idea injection (§10.1) the engine is fully useful as a
+prerequisite**: with idea injection (§9.1) the engine is fully useful as a
 "run my ideas rigorously" machine with autonomous ideation at zero.
 
 **The trial runner (consumer).** Admits a new trial when all of these hold,
@@ -548,7 +581,7 @@ test (campaign halts if it fails) and the reference point — the index shows
 every trial's key metrics as deltas vs parent and vs baseline. (Replicate runs
 for variance estimation: deferred.)
 
-## 9. When things go wrong
+## 8. When things go wrong
 
 Classify failures by *who can tell what happened*; every classification is a
 correctable event, and every retry is in the audit trail.
@@ -570,7 +603,7 @@ correctable event, and every retry is in the audit trail.
   `stalled_quota`, and keeps polling remote jobs (token-free). Restart when
   quota returns resumes via normal replay.
 
-### 9.1 The repair agent
+### 8.1 The repair agent
 
 Remote jobs also fail in odd ways no rule set can anticipate. Two examples of
 the shape:
@@ -602,13 +635,13 @@ create a job the ledger doesn't know about.
   rescue would cry wolf.
 - The exact triggers and actions are meant to be tuned against whatever
   failures a given deployment actually sees.
-- Repair feeds self-improvement (§10.4): incidents accumulate in the ledger,
+- Repair feeds self-improvement (§9.4): incidents accumulate in the ledger,
   and promoting recurring patterns into repair skills — with human review — is
   the learnings loop applied to infrastructure.
 
-## 10. Operating and improving
+## 9. Operating and improving
 
-### 10.1 Observe and intervene
+### 9.1 Observe and intervene
 
 - A **`status` CLI** reads the views: campaign state, per-trial phase/status,
   metric deltas, stalls, `needs_attention` items.
@@ -616,7 +649,7 @@ create a job the ledger doesn't know about.
   campaign, kill a trial, inject an idea into the backlog.
 - Richer approvals (gate overrides, mid-campaign checkpoints) are deferred.
 
-### 10.2 Configure
+### 9.2 Configure
 
 - **Enforced by the engine:** a typed config schema plus a `validate`
   command — DAG acyclic, key metrics bound to deterministic phases, scripts
@@ -628,7 +661,7 @@ create a job the ledger doesn't know about.
   the campaign — DAG, gates, metric bindings, budgets, ideation settings — and
   asks you to approve before the first run. The confirmation is recorded.
 
-### 10.3 Test
+### 9.3 Test
 
 - **Unit:** replay, admission, event serialization — pure functions.
 - **Phase-level:** `run-phase` executes one phase against a fixture directory —
@@ -640,7 +673,7 @@ create a job the ledger doesn't know about.
   state converges and no job is orphaned — event sourcing makes the hardest
   orchestrator property scriptable.
 
-### 10.4 Learn
+### 9.4 Learn
 
 - **Within a campaign**, self-correction happens by construction: analysis
   reports are durable and the ideator reads them.
@@ -654,7 +687,7 @@ create a job the ledger doesn't know about.
   `learning_accepted`); **human-gated promotion** into the project directory;
   accepted learnings surface in views and ideator context across campaigns.
 
-## 11. Decisions log
+## 10. Decisions log
 
 | Decision | Choice | Alternatives considered |
 |---|---|---|
@@ -680,7 +713,7 @@ create a job the ledger doesn't know about.
 | Config help | Independent `configure-campaign` skill + engine `validate` + visual LGTM | Bespoke configuration agent inside the engine |
 | Learnings | v0: human-reviewed project `learnings.md`; future: retrospective phase + human-gated promotion with ledger provenance | Auto-written learnings without review (compounding bias risk) |
 
-## 12. Open questions (deferred deliberately)
+## 11. Open questions (deferred deliberately)
 
 - **First concrete project** — the campaign that validates the design; config
   schema details get finalized against it.
@@ -727,7 +760,7 @@ reconciler would have:
   the log says passed, imitating recovery. For a reconciler, restarting *is*
   reconciling.
 - **Parallel phases don't fit.** A cursor expresses a chain; a reconciler
-  computes a ready set, so fan-out and fan-in come free (§5, §12).
+  computes a ready set, so fan-out and fan-in come free (§5, §11).
 - **The same reasoning is written twice** — admission in the campaign loop,
   phase progression in the trial walk. Both answer "given what has happened,
   what should happen next".
@@ -742,7 +775,7 @@ assert" to "run until quiescent, then assert".
 **What it would not cost:** a single reconciler process keeps the
 single-writer invariant exactly as it is. Reactive does not imply
 distributed — leader election and cross-writer exactly-once only arrive if
-reconciliation spreads across machines, which is a separate decision (§12).
+reconciliation spreads across machines, which is a separate decision (§11).
 
 **Where this leaves it.** Start with the imperative walk: it is the simplest
 thing that works, it reads top to bottom, and it got the system running.

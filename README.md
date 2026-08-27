@@ -67,6 +67,32 @@ the whole engine can be exercised in seconds.
 | `repair.py` | Best-effort recovery when a job hits a situation with no rule |
 | `sync.py`, `vcs.py` | Remote-filesystem mirroring; trial workspaces |
 
+## Status
+
+**Built** (workflows are DAGs by design; the walk implements the linear
+case so far): the event ledger with crash recovery, replayed state and materialized
+views, the phase contract, the job-script contract with a toy project for CI,
+`run_trial` (DAG walk, gates, retries, provenance, resume), the campaign loop
+(baseline, admission, budgets, drain, human controls), the pluggable
+agent-harness adapter (agentic phases, agent-backed ideation, engine-mediated
+`launch_job`), remote-FS mirroring with immediate push on job launch and
+restore-from-mirror, the VCS adapters (Mercurial primary, git and plain-copy
+secondaries), the repair agent, project skill resolution, and a Claude
+Agent SDK harness. CLI: `validate`, `run-phase`, `run-one`,
+`run`, `status`. 189 tests.
+
+**Worked example:** `examples/slurm_mle/` is a complete campaign - a small
+regression task whose training run is submitted with `sbatch`, polled with
+`sacct`, and scored by a harness the trial cannot reach, with the four skills
+it names.
+
+**Not yet exercised against reality:** the hg adapter is tested against a fake
+`hg` that pins the command surface, not a live repository; the Slurm scripts
+are real but have only run against local shims; and no real research project
+has run on the engine yet.
+
+Known gaps and open decisions are in [FINDINGS.md](FINDINGS.md).
+
 ## Tests
 
 ```bash
