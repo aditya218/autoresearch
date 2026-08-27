@@ -1,0 +1,53 @@
+# A synthetic MLE campaign: improve a small regression model, with the
+# expensive training run submitted to Slurm.
+#
+# The shape is the escalation pattern: a cheap local smoke test gates the
+# cluster job, so most bad ideas die before they consume an allocation.
+name: slurm-mle
+goal: >
+  Reduce validation RMSE on the synthetic regression task by improving the
+  model in model.py and its hyperparameters in config.json. The data and the
+  scoring are fixed and out of bounds.
+
+project_dir: .
+
+key_metrics:
+  # Bound to the Slurm phase: only the full training run's number is trusted.
+  val_rmse:
+    from: train
+    goal: minimize
+
+ideation:
+  backlog_target: 2
+  skills: [propose-mle-idea]
+
+budget:
+  max_trials: 8
+  # Each Slurm job takes one allocation, so this is also the cap on
+  # concurrent cluster jobs.
+  active_trials: 2
+
+workflow:
+  implement:
+    agentic: true
+    skills: [implement-mle-idea]
+    produces: [config.json, model.py]
+
+  smoke_test:
+    after: implement
+    gate: true
+    uses: local
+    params: {epochs: 5, max-rmse: 5.0}
+
+  train:
+    after: smoke_test
+    uses: job
+    params: {partition: debug, cpus: 1, time-limit: "00:20:00"}
+    produces: [metrics.json]
+    stuck_after_polls: 20
+    repair: {skill: repair-slurm-job, max_attempts: 2}
+
+  analyze:
+    after: train
+    agentic: true
+    skills: [analyze-mle-results]

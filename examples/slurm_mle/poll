@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Report a Slurm job's state as running | done | failed.
+
+Anything Slurm reports that doesn't map cleanly is printed through as-is: an
+unknown status is a no-rule situation, and the engine hands those to the
+repair agent rather than guessing.
+"""
+
+import argparse
+import subprocess
+import sys
+
+RUNNING = {"PENDING", "RUNNING", "REQUEUED", "RESIZING", "SUSPENDED", "CONFIGURING"}
+DONE = {"COMPLETED"}
+FAILED = {"FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "BOOT_FAIL"}
+
+
+def slurm_state(job_id: str) -> str:
+    """sacct is authoritative and keeps finished jobs; squeue only knows
+    live ones, so it is the fallback while accounting catches up."""
+    proc = subprocess.run(
+        ["sacct", "-j", job_id, "--format=State", "--noheader", "--parsable2"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        # The first line is the job itself; later lines are its steps.
+        return proc.stdout.strip().splitlines()[0].strip().split()[0]
+
+    proc = subprocess.run(
+        ["squeue", "-j", job_id, "-h", "-o", "%T"], capture_output=True, text=True
+    )
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout.strip().splitlines()[0].strip()
+    return "UNKNOWN"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--job-id", required=True)
+    args = ap.parse_args()
+
+    state = slurm_state(args.job_id)
+    if state in RUNNING:
+        print("running")
+    elif state in DONE:
+        print("done")
+    elif state in FAILED:
+        print("failed")
+    else:
+        print(state.lower())  # unknown to the engine: a repair situation
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

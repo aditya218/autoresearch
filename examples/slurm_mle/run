@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Local phases: the cheap smoke test that gates the expensive Slurm run.
+
+Same harness, a handful of epochs. Catches an idea that doesn't even train
+before it consumes a cluster allocation.
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--workspace", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--epochs", default="5")
+    ap.add_argument("--max-rmse", default="10.0", help="fail the gate above this")
+    args = ap.parse_args()
+
+    out = Path(args.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    proc = subprocess.run(
+        [
+            sys.executable, str(HERE / "eval" / "train_eval.py"),
+            "--workspace", str(Path(args.workspace).resolve()),
+            "--out", str(out), "--epochs", str(args.epochs),
+        ],
+        capture_output=True, text=True,
+    )
+    (out / "smoke.log").write_text(proc.stdout + proc.stderr)
+    if proc.returncode != 0:
+        # The model didn't even run: an infrastructure-shaped failure the
+        # engine will retry, not a verdict on the idea.
+        print(proc.stderr.strip()[-500:], file=sys.stderr)
+        return 1
+
+    metrics = json.loads((out / "metrics.json").read_text())
+    diverged = metrics.get("diverged") or metrics.get("val_rmse") is None
+    too_bad = (not diverged) and metrics["val_rmse"] > float(args.max_rmse)
+
+    result = {
+        "status": "failed" if (diverged or too_bad) else "passed",
+        "metrics": {} if diverged else {"smoke_rmse": metrics["val_rmse"]},
+        "notes": (
+            "diverged during smoke test" if diverged
+            else f"smoke rmse {metrics['val_rmse']} over {args.epochs} epochs"
+        ),
+        "artifacts": ["smoke.log", "metrics.json"],
+    }
+    (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

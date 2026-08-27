@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Submit the training job to Slurm; print its job id.
+
+The engine records that id before doing anything else, which is what makes a
+job un-loseable. The `--tag` it passes is attached as the Slurm job name so
+`find` can recover the id if this script dies before printing it.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--tag", required=True)
+    ap.add_argument("--workspace", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--partition", default=os.environ.get("SLURM_PARTITION", "debug"))
+    ap.add_argument("--cpus", default="1")
+    ap.add_argument("--time-limit", default="00:20:00")
+    ap.add_argument("--epochs", default=None)
+    args = ap.parse_args()
+
+    workspace = Path(args.workspace).resolve()
+    out = Path(args.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    epochs_arg = f"--epochs {args.epochs}" if args.epochs else ""
+    script = out / "job.sbatch"
+    script.write_text(
+        f"""#!/bin/bash
+#SBATCH --job-name={args.tag}
+#SBATCH --partition={args.partition}
+#SBATCH --cpus-per-task={args.cpus}
+#SBATCH --time={args.time_limit}
+#SBATCH --output={out}/slurm-%j.out
+#SBATCH --error={out}/slurm-%j.err
+
+set -euo pipefail
+{sys.executable} {HERE}/eval/train_eval.py \\
+    --workspace {workspace} --out {out} {epochs_arg}
+"""
+    )
+    script.chmod(0o755)
+
+    # --parsable makes sbatch print just the job id.
+    proc = subprocess.run(
+        ["sbatch", "--parsable", str(script)], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        print(proc.stderr.strip(), file=sys.stderr)
+        return 1
+
+    job_id = proc.stdout.strip().split(";")[0]
+    if not job_id:
+        print("sbatch printed no job id", file=sys.stderr)
+        return 1
+    print(job_id)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,10 @@
+{
+  "hidden_size": 8,
+  "activation": "tanh",
+  "learning_rate": 0.02,
+  "momentum": 0.0,
+  "epochs": 60,
+  "batch_size": 32,
+  "weight_scale": 0.5,
+  "seed": 0
+}

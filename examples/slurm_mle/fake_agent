@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""A stand-in agent for demonstrating this example without an LLM.
+
+A real harness (`--harness 'claude -p'`) would reason about the research so
+far; this one applies a fixed search so the example runs deterministically in
+CI. It honours exactly the same contract: read the prompt, work in the
+workspace, write result.json.
+"""
+
+import json
+import random
+import re
+import sys
+from pathlib import Path
+
+prompt = sys.stdin.read()
+cwd = Path.cwd()
+
+m = re.search(r"phase directory[^:]*: (\S+)", prompt)
+phase_dir = Path(m.group(1)) if m else cwd
+phase_dir.mkdir(parents=True, exist_ok=True)
+
+
+def finish(status="passed", notes="", metrics=None, artifacts=None):
+    (phase_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "status": status,
+                "metrics": metrics or {},
+                "notes": notes,
+                "artifacts": artifacts or [],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    print(notes or status)
+    sys.exit(0)
+
+
+# -- ideation ---------------------------------------------------------------
+
+if "ideas.json" in prompt:
+    wanted = int(re.search(r"Propose (\d+) new", prompt).group(1))
+    rng = random.Random()
+    space = [
+        ("wider network", {"hidden_size": rng.choice([16, 24, 32])}),
+        ("momentum + longer training",
+         {"momentum": 0.9, "epochs": rng.choice([150, 200])}),
+        ("relu activation", {"activation": "relu", "learning_rate": 0.01}),
+        ("smaller batches", {"batch_size": rng.choice([8, 16])}),
+        ("aggressive learning rate", {"learning_rate": rng.choice([0.4, 0.9])}),
+    ]
+    picks = rng.sample(space, k=min(wanted, len(space)))
+    ideas = [
+        {"name": name, "rationale": f"try {name} to lower val_rmse", "changes": changes}
+        for name, changes in picks
+    ]
+    (cwd / "ideas.json").write_text(json.dumps({"ideas": ideas}, indent=2))
+    print(f"proposed {len(ideas)} ideas")
+    sys.exit(0)
+
+
+# -- repair -----------------------------------------------------------------
+
+if "# Repair request" in prompt:
+    verdict = {
+        "action": "collect" if "metrics.json" in [p.name for p in phase_dir.glob("*")]
+        else "escalate",
+        "diagnosis": "metrics.json is present, so the run finished despite the state"
+        if any(p.name == "metrics.json" for p in phase_dir.glob("*"))
+        else "no metrics were produced; a human should look",
+    }
+    (phase_dir / "repair.json").write_text(json.dumps(verdict, indent=2))
+    print("repair:", verdict["action"])
+    sys.exit(0)
+
+
+# -- implement --------------------------------------------------------------
+
+if "Phase: implement" in prompt:
+    changes = {}
+    m = re.search(r"# The idea to evaluate\n(\{.*?\n\})", prompt, re.S)
+    if m:
+        changes = json.loads(m.group(1)).get("changes", {})
+    config_path = cwd / "config.json"
+    config = json.loads(config_path.read_text())
+    config.update(changes)
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    finish(notes=f"applied {changes or 'no changes (baseline)'}")
+
+
+# -- analyze ----------------------------------------------------------------
+
+metrics_files = list(phase_dir.parent.glob("train/metrics.json"))
+summary = "no training metrics found"
+if metrics_files:
+    metrics = json.loads(metrics_files[0].read_text())
+    cfg = metrics.get("config", {})
+    summary = (
+        f"val_rmse {metrics.get('val_rmse')} with hidden_size={cfg.get('hidden_size')}, "
+        f"lr={cfg.get('learning_rate')}, momentum={cfg.get('momentum')}, "
+        f"epochs={cfg.get('epochs')}"
+    )
+(phase_dir / "report.md").write_text(f"# Analysis\n\n{summary}\n")
+finish(notes=summary, artifacts=["report.md"])

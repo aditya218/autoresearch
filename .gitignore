@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 uv.lock
 toy_project/jobs/
+.fake_slurm/

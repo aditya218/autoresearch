@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""A stand-in for `sacct`: job accounting, including finished jobs.
+
+Reports RUNNING while the process lives, then COMPLETED or FAILED from its
+exit status. Set FAKE_SLURM_STUCK=<job_id> to have it report a state the
+engine has no rule for - the situation the repair agent exists for.
+"""
+
+import argparse
+import json
+import os
+import signal
+from pathlib import Path
+
+STATE = Path(os.environ.get("FAKE_SLURM_STATE", ".fake_slurm")).resolve()
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def state_of(record: dict) -> str:
+    if os.environ.get("FAKE_SLURM_STUCK") == record["job_id"]:
+        return "REVOKED"  # a state the engine does not understand
+    if alive(record["pid"]):
+        return "RUNNING"
+    try:
+        _, status = os.waitpid(record["pid"], os.WNOHANG)
+        code = os.waitstatus_to_exitcode(status)
+    except (ChildProcessError, OSError):
+        # Not our child (or already reaped): infer from whether the job
+        # left metrics behind.
+        log = Path(record["log"])
+        code = 0 if log.exists() and "val_rmse=" in log.read_text() else 1
+    return "COMPLETED" if code == 0 else "FAILED"
+
+
+def records():
+    if not STATE.exists():
+        return []
+    return [json.loads(p.read_text()) for p in sorted(STATE.glob("*.json"))]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-j", "--jobs", default=None)
+    ap.add_argument("--name", default=None)
+    ap.add_argument("--format", default="State")
+    ap.add_argument("--noheader", action="store_true")
+    ap.add_argument("--parsable2", action="store_true")
+    args, _ = ap.parse_known_args()
+
+    matched = [
+        r for r in records()
+        if (args.jobs is None or r["job_id"] == args.jobs)
+        and (args.name is None or r["name"] == args.name)
+    ]
+    if not matched:
+        return 0
+
+    for record in matched:
+        fields = []
+        for field in args.format.split(","):
+            field = field.strip().lower()
+            fields.append(record["job_id"] if field == "jobid" else state_of(record))
+        print("|".join(fields))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
