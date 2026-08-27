@@ -1,8 +1,13 @@
 # Autoresearch v2
 
-An autonomous research engine for ML experimentation. Agents generate ideas
-grounded in the research so far, push each idea through a configurable
-experiment workflow, and everything is recorded durably.
+An autonomous research engine. Agents generate ideas grounded in the research
+so far, push each idea through a configurable experiment workflow, and
+everything is recorded durably.
+
+The engine is domain-agnostic: it knows about phases, jobs, budgets, and its
+ledger, not about any particular kind of research. ML experimentation is the
+driving use case, and everything domain-specific lives in a project's config,
+scripts, and skills.
 
 The architecture in one line: **a small deterministic engine that calls agents
 at defined points — never an agent that runs the show.** The engine's behavior

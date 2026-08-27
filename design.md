@@ -12,25 +12,26 @@ restore-from-mirror, the VCS adapters (Mercurial primary, git and plain-copy
 secondaries), and the repair agent. CLI: `validate`, `run-phase`, `run-one`,
 `run`, `status`. 148 tests.
 
-*Not yet exercised against reality:* the hg adapter is tested only against
-a fake `hg` (hg isn't installed on the dev machine), and no real research
-project has run yet - both wait on a first concrete campaign.
+*Not yet exercised against reality:* the hg adapter is tested against a fake
+`hg` that pins the command surface, not a live repository, and no real
+research project has run on the engine yet. Both wait on a first concrete
+campaign.
 
 ## 1. Why this exists, and what it is
 
-ML research progress is bottlenecked by experiment throughput. We have been
-running research campaigns semi-manually, and the lesson is consistent: ideas
-and code are the fast part — what dominates is everything around them.
-Long-running jobs get lost, infra corner cases eat afternoons, results live in
-scattered notes, and every project rebuilds the same scaffolding.
+Research progress is bottlenecked by experiment throughput, and in a
+semi-manual loop the bottleneck is rarely the thinking. Ideas and code are the
+fast part; what dominates is everything around them. Long-running jobs get
+lost, infrastructure corner cases eat afternoons, results end up in scattered
+notes, and every project rebuilds the same scaffolding.
 
-Part of why the scaffolding is so heavy: truly validating an idea is rarely
-one experiment. Real ML workflows put each idea through a **sequence of
-evaluations of increasing cost and signal** — a local smoke test, a
-small-scale training run, then full scale only for the ideas that earn it —
-with a judgment call between steps about whether to continue. Run by hand,
-this means days of babysitting per idea; it is exactly the structure an
-engine should carry.
+Part of why that scaffolding is so heavy: truly validating an idea is rarely
+one experiment. Real workflows put each idea through a **sequence of
+evaluations of increasing cost and signal** — a cheap local check, a
+small-scale run, then full scale only for the ideas that earn it — with a
+judgment call between steps about whether to continue. Run by hand, that is
+days of babysitting per idea; it is exactly the structure an engine should
+carry.
 
 Agents are now good enough to generate ideas, implement them, and analyze
 results; what's missing is a reliable, reusable machine around them.
@@ -472,9 +473,10 @@ AND terminal_trials + in_flight_trials < max_trials   # total budget
 ```
 
 **`active_trials`** caps concurrency. Because phases within a trial are
-sequential, it also coarsely caps resource use (training jobs need 64 of 256
-GPUs → `active_trials: 4`). Deliberately coarse for v0; per-phase resource
-pools can be added later at this same admission seam.
+sequential, it also coarsely caps resource use — if each trial's heaviest job
+needs a quarter of the available capacity, `active_trials: 4` keeps the
+campaign inside it. Deliberately coarse for v0; per-phase resource pools can
+be added later at this same admission seam.
 
 **`max_trials`** counts in-flight trials to prevent overshoot. Terminal =
 workflow finished or gate-stopped — both consumed an evaluation; infra-errored
@@ -514,14 +516,13 @@ correctable event, and every retry is in the audit trail.
 
 ### 9.1 The repair agent
 
-Remote jobs also fail in odd ways no rule set can anticipate. Two real
-examples:
+Remote jobs also fail in odd ways no rule set can anticipate. Two examples of
+the shape:
 
-- A Slurm job's status never updates to "complete" — but the logs show it
-  trained enough steps. The results are usable; the right move is to collect
-  them anyway.
-- Another cluster job dies in a way that experience says just needs a
-  restart.
+- A job's status never updates to "complete" — but the logs show it did enough
+  work. The results are usable; the right move is to collect them anyway.
+- A job dies in a way that anyone familiar with that system recognizes as
+  transient: it just needs a restart.
 
 Rules can't cover this long tail, but an agent reading the logs can. When a
 job phase hits a situation the engine has no rule for (ambiguous launch, stuck
@@ -538,12 +539,13 @@ create a job the ledger doesn't know about.
 
 - Each phase names a repair skill for its job type
   (`repair: {skill: repair-slurm-train, max_attempts: 2}`) — where a project
-  writes down its hard-won infra folklore.
+  writes down what it knows about how that system fails.
 - After `max_attempts`, the trial parks as `needs_attention` for a human. A
   trial repair *rescued* is not flagged — the repair stays visible in the
   trial's view, but only trials repair gave up on raise a flag, or every
   rescue would cry wolf.
-- The exact triggers and actions will be tuned from real failure cases.
+- The exact triggers and actions are meant to be tuned against whatever
+  failures a given deployment actually sees.
 - Repair feeds self-improvement (§10.4): incidents accumulate in the ledger,
   and promoting recurring patterns into repair skills — with human review — is
   the learnings loop applied to infrastructure.

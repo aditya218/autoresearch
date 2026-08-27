@@ -248,7 +248,7 @@
   <header class="masthead">
     <p class="eyebrow">Design · v0 built end to end · 2026-08-26</p>
     <h1>Autoresearch v2</h1>
-    <p class="standfirst">An autonomous research engine for ML experimentation: agents generate ideas grounded in the research so far, push each one through a configurable experiment workflow, and everything is recorded durably. Projects supply config, launch scripts, and skills; the engine supplies orchestration, state, and reliability.</p>
+    <p class="standfirst">An autonomous research engine: agents generate ideas grounded in the research so far, push each one through a configurable experiment workflow, and everything is recorded durably. The engine is domain-agnostic — ML experimentation is the driving use case, but it knows only about phases, jobs, budgets, and its ledger. Projects supply config, launch scripts, and skills; the engine supplies orchestration, state, and reliability.</p>
     <div class="meta">
       <span><strong>Scale</strong> 10s–100s of trials</span>
       <span><strong>Workflows</strong> running over hours</span>
@@ -273,8 +273,8 @@
 
   <section id="s1">
     <h2><span class="no">§1</span>Why this exists, and what it is</h2>
-    <p>ML research progress is bottlenecked by experiment throughput. We have been running research campaigns semi-manually, and the lesson is consistent: ideas and code are the fast part — what dominates is everything around them. Long-running jobs get lost, infra corner cases eat afternoons, results live in scattered notes, and every project rebuilds the same scaffolding.</p>
-    <p>Part of why the scaffolding is so heavy: truly validating an idea is rarely one experiment. Real ML workflows put each idea through a <strong>sequence of evaluations of increasing cost and signal</strong> — a local smoke test, a small-scale training run, then full scale only for the ideas that earn it — with a judgment call between steps about whether to continue. Run by hand, this means days of babysitting per idea; it is exactly the structure an engine should carry.</p>
+    <p>Research progress is bottlenecked by experiment throughput, and in a semi-manual loop the bottleneck is rarely the thinking. Ideas and code are the fast part; what dominates is everything around them. Long-running jobs get lost, infrastructure corner cases eat afternoons, results end up in scattered notes, and every project rebuilds the same scaffolding.</p>
+    <p>Part of why that scaffolding is so heavy: truly validating an idea is rarely one experiment. Real workflows put each idea through a <strong>sequence of evaluations of increasing cost and signal</strong> — a cheap local check, a small-scale run, then full scale only for the ideas that earn it — with a judgment call between steps about whether to continue. Run by hand, that is days of babysitting per idea; it is exactly the structure an engine should carry.</p>
     <p>Agents are now good enough to generate ideas, implement them, and analyze results; what's missing is a reliable, reusable machine around them.</p>
     <p>Autoresearch v2 is that machine. The intent is deliberately dual. At one end, <strong>fully autonomous research</strong>: the engine ideates, experiments, and learns on its own, for days at a time. At the other, <strong>a developer tool for human-driven research</strong>: you bring the ideas, and the same agentic workflow implements, validates, and documents each one while you do something else. These are not two products — they are the same machine with ideation turned up or down, and most campaigns will live somewhere in between: humans seeding directions, the engine exploring around them.</p>
     <p>The architecture in one line: <strong>a small deterministic engine that calls agents at defined points — never an agent that runs the show.</strong> The engine's behavior is a pure function of its event log and config, which is what makes budgets, crash recovery, and audit trustworthy. Agents do the intelligent work — ideation, implementation, analysis, repair — as bounded episodes whose outputs the engine validates.</p>
@@ -468,7 +468,7 @@ workspace_release(workspace)               <span class="cm"># clean and return t
     <pre class="block">backlog non-empty
 AND in_flight_trials &lt; active_trials                  <span class="cm"># concurrency limit</span>
 AND terminal_trials + in_flight_trials &lt; max_trials   <span class="cm"># total budget</span></pre>
-    <p><strong><code>active_trials</code></strong> caps concurrency. Because phases within a trial are sequential, it also coarsely caps resource use (training jobs need 64 of 256 GPUs → <code>active_trials: 4</code>). Deliberately coarse for v0; per-phase resource pools can be added later at this same admission seam.</p>
+    <p><strong><code>active_trials</code></strong> caps concurrency. Because phases within a trial are sequential, it also coarsely caps resource use — if each trial's heaviest job needs a quarter of the available capacity, <code>active_trials: 4</code> keeps the campaign inside it. Deliberately coarse for v0; per-phase resource pools can be added later at this same admission seam.</p>
     <p><strong><code>max_trials</code></strong> counts in-flight trials to prevent overshoot. Terminal = workflow finished or gate-stopped — both consumed an evaluation; infra-errored trials don't count. At budget: stop admitting, <em>drain</em> in-flight trials, mark the campaign <code>budget_reached</code>, exit cleanly — nothing is killed. <strong>Resume = restart:</strong> raise <code>max_trials</code> and start the engine; replay recomputes counts and continues. The same replay resumes in-flight trials mid-workflow — completed phases never re-run; launched jobs reattach by job_id.</p>
     <p><strong>Baseline (T000).</strong> Run at campaign start on unmodified baseline code: smoke test (campaign halts if it fails) and the reference point — the index shows every trial's key metrics as deltas vs parent and vs baseline. (Replicate runs for variance estimation: deferred.)</p>
   </section>
@@ -484,18 +484,18 @@ AND terminal_trials + in_flight_trials &lt; max_trials   <span class="cm"># tota
     </ul>
 
     <h3><span class="no">9.1</span>The repair agent</h3>
-    <p>Remote jobs also fail in odd ways no rule set can anticipate. Two real examples:</p>
+    <p>Remote jobs also fail in odd ways no rule set can anticipate. Two examples of the shape:</p>
     <ul>
-      <li>A Slurm job's status never updates to "complete" — but the logs show it trained enough steps. The results are usable; the right move is to collect them anyway.</li>
-      <li>Another cluster job dies in a way that experience says just needs a restart.</li>
+      <li>A job's status never updates to "complete" — but the logs show it did enough work. The results are usable; the right move is to collect them anyway.</li>
+      <li>A job dies in a way that anyone familiar with that system recognizes as transient: it just needs a restart.</li>
     </ul>
     <p>Rules can't cover this long tail, but an agent reading the logs can. When a job phase hits a situation the engine has no rule for (ambiguous launch, stuck or unknown status, missing results), the engine calls a <strong>repair agent</strong>. It investigates — logs, the job's history from the ledger — and recommends one action:</p>
     <div class="callout"><p>collect the results anyway · relaunch · keep waiting · fail as infra · fail as idea · give up (ask a human)</p></div>
     <p>The engine performs the chosen action and records it. The agent only ever <em>recommends</em>; it never launches or kills jobs itself, so a repair can never create a job the ledger doesn't know about.</p>
     <ul>
-      <li>Each phase names a repair skill for its job type (<code>repair: {skill: repair-slurm-train, max_attempts: 2}</code>) — where a project writes down its hard-won infra folklore.</li>
+      <li>Each phase names a repair skill for its job type (<code>repair: {skill: repair-slurm-train, max_attempts: 2}</code>) — where a project writes down what it knows about how that system fails.</li>
       <li>After <code>max_attempts</code>, the trial parks as <code>needs_attention</code> for a human. A trial repair <em>rescued</em> is not flagged — the repair stays visible in the trial's view, but only trials repair gave up on raise a flag, or every rescue would cry wolf.</li>
-      <li>The exact triggers and actions will be tuned from real failure cases.</li>
+      <li>The exact triggers and actions are meant to be tuned against whatever failures a given deployment actually sees.</li>
       <li>Repair feeds self-improvement (§10.4): incidents accumulate in the ledger, and promoting recurring patterns into repair skills — with human review — is the learnings loop applied to infrastructure.</li>
     </ul>
   </section>
@@ -576,7 +576,7 @@ AND terminal_trials + in_flight_trials &lt; max_trials   <span class="cm"># tota
 
   <footer>
     <p><strong>Built:</strong> the event ledger with crash recovery, replayed state and materialized views, the phase contract, the job-script contract with a toy project for CI, <code>run_trial</code> (DAG walk, gates, retries, provenance, resume), the campaign loop (baseline, admission, budgets, drain, human controls), the pluggable agent-harness adapter (agentic phases, agent-backed ideation, engine-mediated <code>launch_job</code>), remote-FS mirroring with immediate push on job launch and restore-from-mirror, the VCS adapters (Mercurial primary, git and plain-copy secondaries), and the repair agent. CLI: <code>validate</code>, <code>run-phase</code>, <code>run-one</code>, <code>run</code>, <code>status</code>. 148 tests.</p>
-    <p><strong>Not yet exercised against reality:</strong> the hg adapter is tested only against a fake <code>hg</code> (hg isn't installed on the dev machine), and no real research project has run yet — both wait on a first concrete campaign.</p>
+    <p><strong>Not yet exercised against reality:</strong> the hg adapter is tested against a fake <code>hg</code> that pins the command surface, not a live repository, and no real research project has run on the engine yet. Both wait on a first concrete campaign.</p>
     <p>Canonical copy: <code>design.md</code> in the autoresearch_v2 repository.</p>
   </footer>
 </div>
