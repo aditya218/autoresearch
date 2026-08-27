@@ -10,7 +10,9 @@ import argparse
 import subprocess
 import sys
 
-RUNNING = {"PENDING", "RUNNING", "REQUEUED", "RESIZING", "SUSPENDED", "CONFIGURING"}
+# Queued but not started: no compute consumed yet.
+PENDING = {"PENDING", "CONFIGURING"}
+RUNNING = {"RUNNING", "REQUEUED", "RESIZING", "SUSPENDED"}
 DONE = {"COMPLETED"}
 FAILED = {"FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "BOOT_FAIL"}
 
@@ -41,7 +43,9 @@ def main() -> int:
     args = ap.parse_args()
 
     state = slurm_state(args.job_id)
-    if state in RUNNING:
+    if state in PENDING:
+        print("pending")
+    elif state in RUNNING:
         print("running")
     elif state in DONE:
         print("done")

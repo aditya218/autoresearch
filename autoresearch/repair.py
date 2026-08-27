@@ -52,7 +52,8 @@ class Situation:
 
     trial_id: str
     phase: str
-    trigger: str            # ambiguous_launch | unknown_status | stuck | collect_failed
+    trigger: str            # ambiguous_launch | unknown_status | stuck |
+                            # never_scheduled | collect_failed
     detail: str = ""
     job_id: str | None = None
     status: str | None = None
@@ -98,6 +99,12 @@ Write {verdict_file} into the phase directory:
   fail_infra  - infrastructure's fault; the idea was never really tested
   fail_idea   - the idea itself failed
   escalate    - you cannot tell; a human should look
+
+If the trigger is `never_scheduled`, the job has been queued this whole time
+and has consumed nothing: it has not started, so there are no results and no
+partial work to salvage. Ask why it cannot be placed - usually the resources
+it requested are unavailable - and decide whether waiting is still reasonable
+or whether a human should resubmit it smaller.
 
 Recommend `escalate` rather than guessing. Base the diagnosis on what you
 actually read; do not invent results.

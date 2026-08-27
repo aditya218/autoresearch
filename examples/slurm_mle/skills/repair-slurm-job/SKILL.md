@@ -33,6 +33,24 @@ Otherwise → `relaunch`.
 **A Python traceback in the log.** The trial's code is broken. That is a real
 result about the idea → `fail_idea`, quoting the exception in your diagnosis.
 
+**Never scheduled.** The trigger is `never_scheduled`: the job has sat
+`PENDING` since submission and consumed nothing. There is no partial work and
+nothing to collect. Find out why it cannot be placed:
+
+```
+squeue -j <job_id> -o '%i %T %r'      # %r is the reason: Resources, Priority, ...
+squeue --start -j <job_id>            # Slurm's estimated start time, if it has one
+```
+
+- `Priority` or `Resources` with a plausible start time → the queue is just
+  busy. → `wait`.
+- No estimated start, or a reason like `PartitionNodeLimit` /
+  `QOSMaxGRESPerUser` → it may never be placeable as submitted. → `escalate`,
+  and say in the diagnosis what it asked for and what the partition offers, so
+  a human can resubmit it smaller.
+- Do not recommend `relaunch` here: submitting the same request again queues a
+  second job behind the first and competes with it.
+
 **Still healthy, just slow.** A long-running job making progress, with recent
 output. → `wait`.
 

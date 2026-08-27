@@ -8,8 +8,13 @@ contract with a remote job system is three scripts, plus an optional fourth:
     collect <phase> --job-id ID --out DIR                 -> writes result.json
     find    <phase> --tag TAG                             -> prints job_ids
 
-Statuses the engine understands: running | done | failed. Anything else is an
-unknown status - a no-rule situation, which is where repair comes in (§9.1).
+Statuses the engine understands: pending | running | done | failed. Anything
+else is an unknown status - a no-rule situation, which is where repair comes
+in (§9.1).
+
+`pending` means the job is queued and has consumed no compute yet, which is
+worth distinguishing: a job that has never started may never schedule, and
+the answer is usually to resubmit it smaller rather than to keep waiting.
 """
 
 from __future__ import annotations
@@ -18,10 +23,13 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-RUNNING = "running"
+PENDING = "pending"   # queued; nothing has started
+RUNNING = "running"   # work is actually happening
 DONE = "done"
 FAILED = "failed"
-KNOWN_STATUSES = frozenset({RUNNING, DONE, FAILED})
+KNOWN_STATUSES = frozenset({PENDING, RUNNING, DONE, FAILED})
+#: statuses meaning "not finished yet"
+LIVE_STATUSES = frozenset({PENDING, RUNNING})
 
 
 class ScriptError(Exception):

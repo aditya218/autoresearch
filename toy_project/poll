@@ -24,7 +24,12 @@ def main() -> int:
         return 1
 
     job = json.loads(path.read_text())
-    if job["polls_left"] > 0:
+    # `pending` polls happen before the job starts: queued, nothing running.
+    if job.get("pending_left", 0) > 0:
+        job["pending_left"] -= 1
+        path.write_text(json.dumps(job, indent=2) + "\n")
+        print("pending")
+    elif job["polls_left"] > 0:
         job["polls_left"] -= 1
         path.write_text(json.dumps(job, indent=2) + "\n")
         print("running")

@@ -334,7 +334,12 @@ campaign/
 
 The engine's contract with a project's job system is three scripts:
 **launch** (prints a `job_id`), **poll** (`job_id` → status), **collect**
-(`job_id` → results). The engine appends `job_launched` the moment launch
+(`job_id` → results). Poll answers `pending`, `running`, `done`, or `failed`;
+anything else is a situation the engine has no rule for and goes to repair.
+`pending` is worth its own value because a job that has never started is a
+different problem from one that has run a long time - it has consumed nothing,
+there is nothing to salvage, and it may never be placeable as submitted - so
+a phase can give the queue its own patience (`pending_after_polls`). The engine appends `job_launched` the moment launch
 returns and pushes it to remote immediately. After a restart, replay yields
 every in-flight job_id and polling resumes. The engine knows nothing about the
 underlying job system.

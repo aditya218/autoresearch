@@ -20,7 +20,7 @@ from autoresearch import events as ev
 from autoresearch.config import CampaignConfig, PhaseConfig
 from autoresearch.ledger import Ledger
 from autoresearch.phases import JobPhase, PhaseFailure, PhaseOutcome, run_local_phase
-from autoresearch.project import DONE, FAILED, KNOWN_STATUSES, Project
+from autoresearch.project import DONE, FAILED, KNOWN_STATUSES, PENDING, Project
 from autoresearch.state import CampaignState
 from autoresearch.views import ViewWriter
 
@@ -143,12 +143,27 @@ async def _run_one_phase(
         if status in (DONE, FAILED):
             break
 
-        # Two situations the engine has no rule for: a status it doesn't
-        # understand, and one that never moves (§9.1).
-        stuck_after = cfg.stuck_after_polls or ctx.stuck_after_polls
-        stuck = stuck_after > 0 and same_status_polls >= stuck_after
+        # Three situations the engine has no rule for: a status it doesn't
+        # understand, a job that never starts, and one that runs without its
+        # status ever moving (§9.1).
+        if status == PENDING:
+            # A queued job has consumed nothing yet, so it gets its own
+            # patience: never scheduling is a different problem from running
+            # a long time, and usually wants a different answer.
+            limit = (
+                cfg.pending_after_polls
+                or cfg.stuck_after_polls
+                or ctx.stuck_after_polls
+            )
+            trigger = "never_scheduled"
+        else:
+            limit = cfg.stuck_after_polls or ctx.stuck_after_polls
+            trigger = "stuck"
+        stuck = limit > 0 and same_status_polls >= limit
+
         if status not in KNOWN_STATUSES or stuck:
-            trigger = "unknown_status" if status not in KNOWN_STATUSES else "stuck"
+            if status not in KNOWN_STATUSES:
+                trigger = "unknown_status"
             action = await _ask_repair(
                 ctx, phase, cfg, job, trigger,
                 detail=f"status {status!r} after {same_status_polls} identical polls",

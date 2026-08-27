@@ -264,3 +264,50 @@ def test_prompt_carries_the_situation_and_the_action_menu(tmp_path):
     # The agent is told plainly that it recommends and the engine acts.
     assert "Do not" in prompt and "launch, kill, or modify any job" in prompt
     assert harness.requests[0].skills == ["repair-toy-train"]
+
+
+# -- a job that never gets scheduled -----------------------------------------
+
+
+def test_queued_job_gets_its_own_patience(tmp_path, toy_project):
+    """A job that never starts is a different problem from one that runs a
+    long time, so it is flagged as `never_scheduled` on its own threshold."""
+    cfg = write_config(
+        tmp_path, toy_project,
+        {"polls": 0, "pending": 99, "outcome": "done"},
+        stuck_after=50, max_attempts=1,
+    )
+    # queue patience much shorter than the running-stuck threshold
+    cfg.write_text(cfg.read_text().replace(
+        "stuck_after_polls: 50", "stuck_after_polls: 50\n    pending_after_polls: 3"
+    ))
+    campaign = Campaign(tmp_path / "campaign", cfg)
+    campaign.create_trial("T001")
+    campaign.prepare_workspace("T001")
+    ctx = campaign.trial_context("T001", poll_interval=0, run_agentic=agent_stub)
+    ctx.repair_agent = RepairAgent(repair_harness("escalate", "queued, no start time"))
+
+    with campaign:
+        asyncio.run(run_trial(ctx))
+        started = [e for e in campaign.ledger.events() if e.type == "repair_started"]
+        assert started, "a job stuck pending should reach repair"
+        assert started[0].trigger == "never_scheduled"
+        assert "pending" in started[0].detail
+
+
+def test_pending_then_running_is_not_a_problem(tmp_path, toy_project):
+    """Time in the queue is normal; it only matters when it doesn't end."""
+    status, campaign = drive(
+        tmp_path, toy_project,
+        {"pending": 2, "polls": 1, "outcome": "done", "scale": 1.0},
+        repair_harness("escalate"), stuck_after=10,
+    )
+    with campaign:
+        assert status == "completed"
+        assert not [e for e in campaign.ledger.events() if e.type == "repair_started"]
+        # The queue time is visible in the ledger as a real transition.
+        statuses = [
+            e.status for e in campaign.ledger.events()
+            if e.type == "job_status_changed"
+        ]
+        assert statuses == ["pending", "running", "done"]

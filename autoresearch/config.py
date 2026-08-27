@@ -59,6 +59,10 @@ class PhaseConfig(BaseModel):
     #: polls a job may sit in one status before repair is asked to look;
     #: 0 disables the stuck check
     stuck_after_polls: int = Field(default=0, ge=0)
+    #: polls a job may sit *queued* before repair is asked to look. A job
+    #: that never starts is a different problem from one that runs a long
+    #: time, so it gets its own patience; falls back to stuck_after_polls.
+    pending_after_polls: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def _check_kind(self) -> "PhaseConfig":
