@@ -259,11 +259,45 @@ class CampaignLoop:
         self.c.recorder.record(ev.CampaignResumed)
 
     def kill_trial(self, trial_id: str, reason: str = "killed by user") -> None:
+        """Stop a trial, and stop its remote jobs.
+
+        Cancelling the task only stops the engine watching; without the
+        cancel below the job stays queued or running, consuming an
+        allocation nobody is looking at.
+        """
         task = self._running.get(trial_id)
         if task is not None:
             task.cancel()
+
         trial = self.c.state.trials.get(trial_id)
-        if trial is not None and trial.in_flight:
-            self.c.recorder.record(
-                ev.TrialFinished, trial=trial_id, status="killed", reason=reason
-            )
+        if trial is None or not trial.in_flight:
+            return
+
+        for phase_name, phase in trial.phases.items():
+            if phase.job_id and phase.status == "running":
+                try:
+                    project = self._project_for_phase(phase_name)
+                    if project.cancel(phase_name, phase.job_id):
+                        self.c.recorder.record(
+                            ev.JobCancelled, trial=trial_id, phase=phase_name,
+                            job_id=phase.job_id, reason=reason,
+                        )
+                except Exception:  # noqa: BLE001 - killing must still finish
+                    pass
+
+        self.c.recorder.record(
+            ev.TrialFinished, trial=trial_id, status="killed", reason=reason
+        )
+
+    def _project_for_phase(self, phase_name: str):
+        """Scripts for this phase - shared or the project's own."""
+        from autoresearch.phase_library import resolve as resolve_impl
+        from autoresearch.project import Project
+
+        cfg = self.c.config.workflow[phase_name]
+        impl = resolve_impl(cfg.uses or "job", self.c.project.dir)
+        return (
+            self.c.project
+            if impl.scripts_dir == self.c.project.dir
+            else Project(impl.scripts_dir)
+        )

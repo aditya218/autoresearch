@@ -311,3 +311,59 @@ def test_pending_then_running_is_not_a_problem(tmp_path, toy_project):
             if e.type == "job_status_changed"
         ]
         assert statuses == ["pending", "running", "done"]
+
+
+# -- cleaning up jobs the engine is done with --------------------------------
+
+
+def cancelled_jobs(campaign) -> list[str]:
+    return [
+        e.job_id for e in campaign.ledger.events() if e.type == "job_cancelled"
+    ]
+
+
+def test_repair_giving_up_cancels_the_job(tmp_path, toy_project):
+    """Abandoning a phase must not leave the job queued and unwatched."""
+    status, campaign = drive(
+        tmp_path, toy_project,
+        {"polls": 0, "outcome": "stuck"},
+        repair_harness("escalate", "cannot tell"),
+    )
+    with campaign:
+        assert status == "errored"
+        launched = [
+            e.job_id for e in campaign.ledger.events() if e.type == "job_launched"
+        ]
+        # The phase retries, so several jobs may exist - none may be left
+        # queued and unwatched.
+        assert launched
+        assert set(cancelled_jobs(campaign)) == set(launched)
+
+
+def test_relaunch_cancels_the_submission_it_replaces(tmp_path, toy_project):
+    """Otherwise the old job stays queued, competing with its replacement."""
+    status, campaign = drive(
+        tmp_path, toy_project,
+        {"polls": 0, "outcome": "stuck"},
+        repair_harness("relaunch", "transient"),
+    )
+    with campaign:
+        launched = [e.job_id for e in campaign.ledger.events() if e.type == "job_launched"]
+        cancelled = cancelled_jobs(campaign)
+        assert len(launched) >= 2
+        # every superseded submission was cancelled, the last one included
+        assert set(cancelled) <= set(launched)
+        assert launched[0] in cancelled
+
+
+def test_a_project_without_cancel_still_works(tmp_path, toy_project):
+    """cancel is optional: without it the job is left to its scheduler."""
+    (toy_project / "cancel").unlink()
+    status, campaign = drive(
+        tmp_path, toy_project,
+        {"polls": 0, "outcome": "stuck"},
+        repair_harness("escalate"),
+    )
+    with campaign:
+        assert status == "errored"
+        assert cancelled_jobs(campaign) == []

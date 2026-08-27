@@ -48,18 +48,31 @@ def cmd_validate(args: argparse.Namespace) -> int:
     if not project.dir.exists():
         problems.append(f"project dir not found: {project.dir}")
     else:
-        needed = set()
-        for phase in cfg.workflow.values():
-            if phase.uses == "job":
-                needed |= {"launch", "poll", "collect"}
-            elif phase.uses is not None:
-                needed.add("run")
-        for name in sorted(needed):
-            script = project.script_path(name)
-            if not script.exists():
-                problems.append(f"missing project script: {script}")
-            elif not script.stat().st_mode & 0o111:
-                problems.append(f"project script not executable: {script}")
+        from autoresearch.phase_library import PhaseImplError
+        from autoresearch.phase_library import resolve as resolve_impl
+
+        # Every `uses:` must resolve now, not when a trial reaches that phase.
+        needed: dict[Path, set[str]] = {}
+        impls: dict[str, object] = {}
+        for phase_name, phase in cfg.workflow.items():
+            if phase.uses is None:
+                continue
+            try:
+                impl = resolve_impl(phase.uses, project.dir)
+            except PhaseImplError as exc:
+                problems.append(f"phase {phase_name!r}: {exc}")
+                continue
+            impls[phase_name] = impl
+            scripts = {"launch", "poll", "collect"} if impl.is_job else {"run"}
+            needed.setdefault(impl.scripts_dir, set()).update(scripts)
+
+        for scripts_dir, names in needed.items():
+            for name in sorted(names):
+                script = scripts_dir / name
+                if not script.exists():
+                    problems.append(f"missing script: {script}")
+                elif not script.stat().st_mode & 0o111:
+                    problems.append(f"script not executable: {script}")
 
     if problems:
         for problem in problems:
@@ -69,6 +82,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
     order = cfg.phase_order()
     print(f"config ok: {cfg.name}")
     print(f"  phases:      {' -> '.join(order)}")
+    for phase_name in order:
+        impl = impls.get(phase_name)
+        if impl is None:
+            continue
+        where = (
+            "project"
+            if impl.scripts_dir == project.dir
+            else f"shared:{impl.name}"
+            if impl.name in __import__(
+                "autoresearch.phase_library", fromlist=["shared_names"]
+            ).shared_names()
+            else str(impl.scripts_dir)
+        )
+        extras = [s for s in ("find", "cancel") if (impl.scripts_dir / s).exists()]
+        note = f" (+{', '.join(extras)})" if extras else ""
+        print(f"    {phase_name:12s} {impl.kind:5s} from {where}{note}")
     gates = [n for n in order if cfg.workflow[n].gate]
     print(f"  gates:       {', '.join(gates) if gates else '(none)'}")
     for metric, mcfg in cfg.key_metrics.items():

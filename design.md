@@ -332,9 +332,12 @@ campaign/
 
 ### 6.3 Remote jobs
 
-The engine's contract with a project's job system is three scripts:
+The engine's contract with a project's job system is three scripts —
 **launch** (prints a `job_id`), **poll** (`job_id` → status), **collect**
-(`job_id` → results). Poll answers `pending`, `running`, `done`, or `failed`;
+(`job_id` → results) — plus two optional ones: **find** (`tag` → job_ids)
+and **cancel** (`job_id`). Cancel matters more than it looks: without it, a
+killed trial, a repair that gives up, or a relaunch all leave the old job
+queued and consuming an allocation nobody is watching. Poll answers `pending`, `running`, `done`, or `failed`;
 anything else is a situation the engine has no rule for and goes to repair.
 `pending` is worth its own value because a job that has never started is a
 different problem from one that has run a long time - it has consumed nothing,
@@ -426,6 +429,21 @@ wherever the library doesn't fit. The rule that keeps this healthy: **shared
 phases are not special.** They are built against the same public contract as
 custom ones, and the library lives *beside* the engine, not in it — the engine
 core never learns what Slurm is. In config both look alike (§5's example).
+
+`uses:` resolves to one of four things: `local` and `job` (the project's own
+scripts), a shared phase shipped beside the engine (`slurm_job`), or a path
+to a custom directory (`./phases/my_sim`). Anything else is an error rather
+than a silent fallback, so a typo fails at `validate` instead of running the
+wrong thing. A shared phase is reusable because what it runs is a parameter:
+
+```yaml
+train:
+  uses: slurm_job
+  params:
+    command: "python eval/train.py --workspace {workspace} --out {out}"
+    partition: gpu
+    gpus: 8
+```
 
 If a shared phase needs something the contract doesn't offer, that's a
 contract gap to fix for everyone — not a private hook. Agentic phases

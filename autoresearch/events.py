@@ -158,6 +158,17 @@ class JobStatusChanged(BaseEvent):
 # --- metrics ----------------------------------------------------------------
 
 
+class JobCancelled(BaseEvent):
+    """The engine stopped a job it had launched (killed trial, repair gave
+    up, or a relaunch replacing it)."""
+
+    type: Literal["job_cancelled"] = "job_cancelled"
+    trial: str
+    phase: str
+    job_id: str
+    reason: str = ""
+
+
 class RepairStarted(BaseEvent):
     """The engine hit a situation it has no rule for and asked repair."""
 
@@ -207,6 +218,7 @@ Event = Annotated[
         PhaseErrored,
         JobLaunched,
         JobStatusChanged,
+        JobCancelled,
         RepairStarted,
         RepairVerdict,
         MetricRecorded,

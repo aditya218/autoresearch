@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+"""Shared phase: cancel a Slurm job.
+
+Called when the engine is done with a job that may still exist - a killed
+trial, a repair that gave up, or a relaunch that would otherwise leave the
+old submission queued and competing with its own replacement.
+
+Cancelling an already-finished job is not an error: the point is that the
+job is not running afterwards.
+"""
+
+import argparse
+import subprocess
+import sys
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--job-id", required=True)
+    args, _ = ap.parse_known_args()
+
+    proc = subprocess.run(
+        ["scancel", args.job_id], capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        message = proc.stderr.strip()
+        # Already gone is the outcome we wanted.
+        if "Invalid job id" in message or "already completed" in message:
+            return 0
+        print(message, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

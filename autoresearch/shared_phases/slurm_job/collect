@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Shared phase: turn a finished Slurm job into `result.json`.
+
+Generic by necessity: this phase cannot know what a project's metrics mean.
+It looks for a `metrics.json` the job wrote and reports a pass; a project
+that needs to judge its own numbers (a threshold, a divergence check) should
+have its job write `result.json` directly, or supply a custom collect.
+"""
+
+import argparse
+import json
+from pathlib import Path
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--job-id", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument(
+        "--metrics-file", default="metrics.json",
+        help="what the job wrote its numbers to",
+    )
+    args, _ = ap.parse_known_args()
+
+    out = Path(args.out).resolve()
+
+    # The job may have written the contract file itself, which always wins.
+    if (out / "result.json").exists():
+        return 0
+
+    metrics_path = out / args.metrics_file
+    if not metrics_path.exists():
+        # Slurm called it finished but nothing came back: a repair situation.
+        print(f"no {args.metrics_file} in {out}")
+        return 1
+
+    try:
+        metrics = json.loads(metrics_path.read_text())
+    except json.JSONDecodeError as exc:
+        print(f"{metrics_path}: not valid JSON: {exc}")
+        return 1
+
+    numeric = {
+        k: float(v)
+        for k, v in metrics.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    (out / "result.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "metrics": numeric,
+                "notes": f"slurm job {args.job_id}",
+                "artifacts": [args.metrics_file],
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Shared phase: find Slurm jobs by the tag the engine attached at launch.
+
+Turns the worst failure mode - a submission that succeeded but whose id was
+lost - into a lookup rather than an orphaned job.
+"""
+
+import argparse
+import subprocess
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("phase")
+    ap.add_argument("--tag", required=True)
+    args, _ = ap.parse_known_args()
+
+    proc = subprocess.run(
+        ["squeue", "--name", args.tag, "-h", "-o", "%i"],
+        capture_output=True, text=True,
+    )
+    ids = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+    if not ids:
+        # Gone from the queue: ask accounting, which remembers finished jobs.
+        proc = subprocess.run(
+            ["sacct", "--name", args.tag, "--format=JobID", "--noheader",
+             "--parsable2"],
+            capture_output=True, text=True,
+        )
+        ids = [
+            line.strip()
+            for line in proc.stdout.splitlines()
+            if line.strip() and "." not in line  # jobs, not steps
+        ]
+
+    for job_id in ids:
+        print(job_id)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

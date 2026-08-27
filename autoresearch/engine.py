@@ -20,6 +20,8 @@ from autoresearch import events as ev
 from autoresearch.config import CampaignConfig, PhaseConfig
 from autoresearch.ledger import Ledger
 from autoresearch.phases import JobPhase, PhaseFailure, PhaseOutcome, run_local_phase
+from autoresearch.phase_library import PhaseImplError
+from autoresearch.phase_library import resolve as resolve_impl_raw
 from autoresearch.project import DONE, FAILED, KNOWN_STATUSES, PENDING, Project
 from autoresearch.state import CampaignState
 from autoresearch.views import ViewWriter
@@ -80,6 +82,15 @@ class TrialContext:
         return f"{self.config.name}/{self.trial_id}/{phase}"
 
 
+def resolve_impl(cfg, project_dir):
+    """Where this phase's scripts live. A `uses:` the engine cannot resolve
+    is a phase failure, not a silent fallback to the project's `run`."""
+    try:
+        return resolve_impl_raw(cfg.uses, project_dir)
+    except PhaseImplError as exc:
+        raise PhaseFailure(str(exc)) from exc
+
+
 class AgenticPhaseUnsupported(PhaseFailure):
     """No agent harness was supplied for an agentic phase."""
 
@@ -105,15 +116,21 @@ async def _run_one_phase(
             ctx.run_agentic, phase, cfg, ctx.workspace, phase_dir
         )
 
-    if cfg.uses != "job":
+    impl = resolve_impl(cfg, ctx.project.dir)
+    project = (
+        ctx.project
+        if impl.scripts_dir == ctx.project.dir
+        else Project(impl.scripts_dir)
+    )
+    if not impl.is_job:
         return await asyncio.to_thread(
-            run_local_phase, ctx.project, phase, cfg, ctx.workspace, phase_dir
+            run_local_phase, project, phase, cfg, ctx.workspace, phase_dir
         )
 
     # Remote job: record the job_id the instant launch returns, before any
     # further work - that single event is what makes a job un-loseable.
     job = JobPhase(
-        project=ctx.project, phase=phase, cfg=cfg, workspace=ctx.workspace,
+        project=project, phase=phase, cfg=cfg, workspace=ctx.workspace,
         phase_dir=phase_dir, tag=ctx.tag(phase),
     )
     if resume_job is not None:
@@ -173,10 +190,14 @@ async def _run_one_phase(
             elif action == "collect":
                 break
             elif action == "relaunch":
+                # Stop the old submission first: otherwise it stays queued
+                # and competes with its own replacement.
+                await _cancel_job(ctx, phase, job, "replaced by repair relaunch")
                 return await _run_one_phase(ctx, phase, cfg, attempt)
             elif action == "fail_idea":
                 return PhaseOutcome(status="failed", notes="repair: idea failed")
             else:  # fail_infra or escalate
+                await _cancel_job(ctx, phase, job, f"repair: {action}")
                 raise PhaseFailure(f"{phase}: repair gave up ({action})")
 
         await asyncio.sleep(ctx.poll_interval)
@@ -192,6 +213,25 @@ async def _run_one_phase(
             raise
         return await _run_one_phase(ctx, phase, cfg, attempt)
     return outcome
+
+
+async def _cancel_job(ctx: TrialContext, phase: str, job, reason: str) -> None:
+    """Stop a job the engine is done with, and record that it did. Best
+    effort: a project without a cancel script leaves the job to its
+    scheduler, and a cancel that fails must not mask the original problem."""
+    if job.job_id is None:
+        return
+    try:
+        cancelled = await asyncio.to_thread(
+            job.project.cancel, phase, job.job_id
+        )
+    except Exception:  # noqa: BLE001 - never let cleanup hide the real failure
+        cancelled = False
+    if cancelled:
+        ctx.recorder.record(
+            ev.JobCancelled, trial=ctx.trial_id, phase=phase,
+            job_id=job.job_id, reason=reason,
+        )
 
 
 async def _ask_repair(ctx: TrialContext, phase: str, cfg, job, trigger: str, detail: str) -> str:

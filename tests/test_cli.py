@@ -31,7 +31,7 @@ def test_validate_reports_missing_scripts(tmp_path, toy_project, capsys):
         "workflow:\n  train: {uses: job}\n"
     )
     assert main(["validate", str(cfg)]) == 1
-    assert "missing project script" in capsys.readouterr().err
+    assert "missing script" in capsys.readouterr().err
 
 
 def test_run_phase_local(tmp_path, toy_project, workspace, capsys):

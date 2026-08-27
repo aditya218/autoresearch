@@ -245,6 +245,11 @@ class CampaignState:
         phase.job_status = e.status
         self._touch(e.trial, e.seq)
 
+    def _on_job_cancelled(self, e: ev.JobCancelled) -> None:
+        phase = self._phase(e.trial, e.phase)
+        phase.job_status = "cancelled"
+        self._touch(e.trial, e.seq)
+
     # -- repair --------------------------------------------------------------
 
     def _on_repair_started(self, e: ev.RepairStarted) -> None:

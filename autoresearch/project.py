@@ -124,6 +124,22 @@ class Project:
                 f"collect {phase} {job_id}: exit {res.returncode}\n{res.stderr.strip()}"
             )
 
+    def cancel(self, phase: str, job_id: str, timeout_s: float | None = None) -> bool:
+        """Stop a job the engine launched. Optional: a project without a
+        cancel script simply leaves the job to the scheduler.
+
+        Returns whether a cancel was actually issued, so the caller can say
+        so in the ledger.
+        """
+        if not self.has("cancel"):
+            return False
+        res = self.run("cancel", [phase, "--job-id", job_id], timeout_s=timeout_s)
+        if res.returncode != 0:
+            raise ScriptError(
+                f"cancel {phase} {job_id}: exit {res.returncode}\n{res.stderr.strip()}"
+            )
+        return True
+
     def find(self, phase: str, tag: str, timeout_s: float | None = None) -> list[str]:
         """Optional: look up jobs by tag, turning an ambiguous launch into a
         lookup. Absent script -> no answer, not an error."""
