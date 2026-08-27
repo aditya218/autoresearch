@@ -388,9 +388,10 @@ adapter as primary, with the client binary and workspace creation as
 parameters so an hg-compatible client needs no new adapter; git is a trivial
 secondary.
 
-*The engine walks each trial imperatively. A reconciling design — deriving
-what should run from the ledger instead — was considered and is still open;
-Appendix A weighs it.*
+*The engine walks each trial imperatively — the simplest thing that works,
+chosen deliberately. A reconciling design, deriving what should run from the
+ledger instead, is the natural upgrade and stays open; Appendix A weighs it
+and shows why moving later is a contained change.*
 
 ## 7. Phases in detail
 
@@ -743,10 +744,29 @@ single-writer invariant exactly as it is. Reactive does not imply
 distributed — leader election and cross-writer exactly-once only arrive if
 reconciliation spreads across machines, which is a separate decision (§12).
 
-**Where this leaves it.** The designs differ less than they appear, and one
-step closes most of the gap: extract `reconcile(state) → actions` as a pure
-function, leaving `run_trial` a thin driver that runs what it returns. That
+**Where this leaves it.** Start with the imperative walk: it is the simplest
+thing that works, it reads top to bottom, and it got the system running.
+Moving to a reconciler later is deliberately kept cheap — and worth
+recording *why*, so the option stays real rather than aspirational.
+
+Nothing that is expensive to change would change:
+
+- **The ledger format.** Phase events already carry their own identity, so a
+  ready-set walk reads exactly the same log. No migration.
+- **The three contracts** — `result.json`, the job scripts, the harness
+  interface. All untouched.
+- **Derived state.** Already a pure fold; a reconciler needs the same
+  `CampaignState`.
+- **The tests.** They assert outcomes — this trial completed, that gate
+  stopped it, no job was orphaned — not how the walk arrived there. They
+  carry over, and become the safety net for the change itself.
+
+What changes is `run_trial`'s loop and one config field (`after: [a, b]`).
+The step itself is to extract `reconcile(state) → actions` as a pure
+function, leaving `run_trial` a thin driver that runs what it returns: that
 makes position derived rather than held, yields the ready set parallel
 phases need, and is testable with no agents, jobs, or async involved.
-Whether the rules then live in code or in config is a later and smaller
-choice — code until a real need appears.
+
+Whether the rules then live in code or in configuration is a later and much
+smaller choice — and the expression language is the part that genuinely
+bites, so: code until a real need appears (§5).

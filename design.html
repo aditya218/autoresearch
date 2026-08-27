@@ -433,7 +433,7 @@ current_node(workspace) → node
 diff(node_a, node_b) → patch
 workspace_release(workspace)               <span class="cm"># clean and return to pool, or destroy</span></pre>
     <p>v0 ships the <strong>hg adapter</strong> as primary, with the client binary and workspace creation as parameters so an hg-compatible client needs no new adapter; a git adapter is a trivial secondary.</p>
-    <p class="overview">The engine walks each trial imperatively. A reconciling design — deriving what should run from the ledger instead — was considered and is still open; Appendix A weighs it.</p>
+    <p class="overview">The engine walks each trial imperatively — the simplest thing that works, chosen deliberately. A reconciling design, deriving what should run from the ledger instead, is the natural upgrade and stays open; Appendix A weighs it and shows why moving later is a contained change.</p>
   </section>
 
 
@@ -602,7 +602,14 @@ AND terminal_trials + in_flight_trials &lt; max_trials   <span class="cm"># tota
     </ul>
     <p><strong>What it would cost.</strong> Debuggability inverts: "why didn't <code>analyze</code> start?" is currently answered by reading twenty lines in order, but against a rule set it means reasoning about evaluation, and rules interact. If the rules became <em>configuration</em> rather than code, they would grow conditions and guards into a language of their own. And testing shifts from "call it and assert" to "run until quiescent, then assert".</p>
     <div class="callout"><p><strong>What it would not cost:</strong> a single reconciler process keeps the single-writer invariant exactly as it is. Reactive does not imply distributed — leader election and cross-writer exactly-once only arrive if reconciliation spreads across machines, which is a separate decision (§12).</p></div>
-    <p><strong>Where this leaves it.</strong> The designs differ less than they appear, and one step closes most of the gap: extract <code>reconcile(state) → actions</code> as a pure function, leaving <code>run_trial</code> a thin driver that runs what it returns. That makes position derived rather than held, yields the ready set parallel phases need, and is testable with no agents, jobs, or async involved. Whether the rules then live in code or in config is a later and smaller choice — code until a real need appears.</p>
+    <p><strong>Where this leaves it.</strong> Start with the imperative walk: it is the simplest thing that works, it reads top to bottom, and it got the system running. Moving to a reconciler later is deliberately kept cheap — and worth recording <em>why</em>, so the option stays real rather than aspirational. Nothing that is expensive to change would change:</p>
+    <ul>
+      <li><strong>The ledger format.</strong> Phase events already carry their own identity, so a ready-set walk reads exactly the same log. No migration.</li>
+      <li><strong>The three contracts</strong> — <code>result.json</code>, the job scripts, the harness interface. All untouched.</li>
+      <li><strong>Derived state.</strong> Already a pure fold; a reconciler needs the same <code>CampaignState</code>.</li>
+      <li><strong>The tests.</strong> They assert outcomes — this trial completed, that gate stopped it, no job was orphaned — not how the walk arrived there. They carry over, and become the safety net for the change itself.</li>
+    </ul>
+    <p>What changes is <code>run_trial</code>'s loop and one config field (<code>after: [a, b]</code>). The step itself is to extract <code>reconcile(state) → actions</code> as a pure function, leaving <code>run_trial</code> a thin driver that runs what it returns: that makes position derived rather than held, yields the ready set parallel phases need, and is testable with no agents, jobs, or async involved. Whether the rules then live in code or in configuration is a later and much smaller choice — and the expression language is the part that genuinely bites, so: code until a real need appears (§5).</p>
   </section>
 
   <footer>
