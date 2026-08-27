@@ -252,3 +252,70 @@ def test_raising_budget_and_restarting_continues(tmp_path, toy_project):
         asyncio.run(loop.run())
         assert c.state.budget_consumed_trials == 4
         assert c.state.trials[BASELINE_TRIAL].status == "completed"
+
+
+# -- resuming after the engine died, with nothing left to admit --------------
+
+
+def test_in_flight_trials_finish_even_when_the_budget_is_used_up(tmp_path, toy_project):
+    """The engine dies while jobs are running; by the time it comes back
+    there is nothing new to admit. The jobs kept running regardless, so the
+    trials that own them must still be driven to completion - otherwise
+    their results are stranded on the cluster."""
+    from autoresearch import events as ev
+    from autoresearch.config import PhaseConfig
+    from autoresearch.phases import JobPhase
+
+    cfg = write_config(tmp_path, toy_project, max_trials=2, active_trials=2)
+    campaign_dir = tmp_path / "campaign"
+
+    # First run: baseline completes, then a trial launches its job and the
+    # process dies before the job finishes.
+    with Campaign(campaign_dir, cfg) as c:
+        loop = CampaignLoop(c, ideator=None, run_agentic=agent_stub, poll_interval=0)
+        asyncio.run(loop.run_baseline())
+        assert c.state.trials[BASELINE_TRIAL].status == "completed"
+
+        loop.inject_idea(payload={"name": "mine", "delta": 0.3})
+        trial_id = loop.admit(c.state.backlog[0])
+        (c.workspace_dir(trial_id) / "change.json").write_text(
+            json.dumps({"name": "mine", "delta": 0.3})
+        )
+        c.recorder.record(ev.PhaseStarted, trial=trial_id, phase="implement")
+        c.recorder.record(
+            ev.PhaseCompleted, trial=trial_id, phase="implement", status="passed"
+        )
+        c.recorder.record(ev.PhaseStarted, trial=trial_id, phase="train")
+        job = JobPhase(
+            project=c.project, phase="train",
+            cfg=PhaseConfig(uses="job", params={"polls": 1, "scale": 1.0}),
+            workspace=c.workspace_dir(trial_id),
+            phase_dir=c.dir / "trials" / trial_id / "phases" / "train",
+            tag=f"t/{trial_id}/train",
+        )
+        job_id = job.launch()
+        c.recorder.record(
+            ev.JobLaunched, trial=trial_id, phase="train", job_id=job_id, tag=job.tag
+        )
+        # <- process dies here
+
+    # Restart. The budget is fully accounted for: one terminal trial plus one
+    # in flight equals max_trials, so nothing new can be admitted.
+    with Campaign(campaign_dir, cfg) as c:
+        assert c.report.reattached_jobs == [job_id]
+        loop = CampaignLoop(c, ideator=None, run_agentic=agent_stub, poll_interval=0)
+        assert loop.can_admit() is False, "nothing should be admissible"
+        assert loop.budget_exhausted() is True
+
+        result = asyncio.run(loop.run())
+
+        trial = c.state.trials[trial_id]
+        assert trial.status == "completed", "the in-flight trial was abandoned"
+        assert trial.metrics["score"].value == pytest.approx(0.80)
+        # and it reattached rather than launching a second job
+        launched = [
+            e for e in c.ledger.events()
+            if e.type == "job_launched" and e.trial == trial_id
+        ]
+        assert len(launched) == 1, "the resumed trial relaunched its job"
+        assert result.status == "budget_reached"
